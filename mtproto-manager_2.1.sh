@@ -508,8 +508,13 @@ main_menu() {
         echo "   4) 🔄 Обновить домен маскировки"
         echo "   5) 🔗 Показать все ссылки"
         echo "   6) 🔄 Обновить функции bash"
-        echo "   7) 🌐 Веб-панель"
-        echo "   8) ❌ Выход"
+        echo "   7) 🎨 Консольная панель"    # ← НОВОЕ
+        echo "   0) ❌ Выход"
+
+
+        
+        
+        
         echo ""
         echo -n "Ваш выбор (1-8): "
         read -r choice
@@ -522,6 +527,7 @@ main_menu() {
             6) regenerate_functions ;;
             7) cli_web_panel ;;
             8|*) log_info "Выход"; exit 0 ;;
+            0|*) log_info "Выход"; exit 0 ;;      # ← Измените
             *) log_warn "Неверный выбор" ;;
         esac
         echo ""
@@ -568,6 +574,335 @@ quick_install() {
     fi
 }
 
+# ==================== 🎨 КОНСОЛЬНАЯ ВЕБ-ПАНЕЛЬ ====================
+
+generate_web_panel() {
+    local output="/tmp/mtproto-panel.html"
+    local total=${#PROXIES[@]}
+    local active=0
+    for port in "${!PROXIES[@]}"; do
+        local container=$(get_container_name "$port")
+        is_running "$container" && ((active++))
+    done
+    local ports_list=$(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n)
+    local port_range=""
+    if [ -n "$ports_list" ]; then
+        local first=$(echo "$ports_list" | head -1)
+        local last=$(echo "$ports_list" | tail -1)
+        port_range="${first}-${last}"
+    fi
+
+    # Генерация JSON-массива прокси для JavaScript
+    local proxies_json="["
+    local first_item=true
+    for port in $ports_list; do
+        local value="${PROXIES[$port]}"
+        local domain="${value%%:*}"
+        local secret="${value#*:}"
+        local container=$(get_container_name "$port")
+        local status=$(is_running "$container" && echo "up" || echo "down")
+        if [ "$first_item" = true ]; then
+            first_item=false
+        else
+            proxies_json+=","
+        fi
+        proxies_json+="{\"port\":$port,\"domain\":\"$domain\",\"secret\":\"$secret\",\"status\":\"$status\"}"
+    done
+    proxies_json+="]"
+
+    cat > "$output" << HTML_HEAD
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MTProto Proxy Manager | Console Panel</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace; background: #0a0e1a; color: #e2e8f0; min-height: 100vh; padding: 20px; line-height: 1.6; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .terminal-header { background: #1e2434; border-radius: 12px 12px 0 0; padding: 12px 20px; display: flex; align-items: center; gap: 10px; border-bottom: 2px solid #4f6bc4; }
+        .terminal-dots { display: flex; gap: 8px; }
+        .terminal-dot { width: 14px; height: 14px; border-radius: 50%; }
+        .dot-red { background: #ff5f56; } .dot-yellow { background: #ffbd2e; } .dot-green { background: #27c93f; }
+        .terminal-title { color: #8b949e; font-size: 14px; margin-left: 10px; }
+        .terminal-body { background: #141b2b; border-radius: 0 0 12px 12px; padding: 25px; border: 1px solid #2d3748; border-top: none; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+        .command-line { background: #0f1625; border-left: 4px solid #4f6bc4; padding: 15px 20px; margin-bottom: 25px; border-radius: 8px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .prompt { color: #4f6bc4; font-weight: bold; }
+        .command-text { color: #e2e8f0; }
+        .stats-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 30px; }
+        .stat-block { background: #0f1625; border: 1px solid #2d3748; border-radius: 8px; padding: 15px; }
+        .stat-label { color: #6b7a8f; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; }
+        .stat-value { font-size: 28px; font-weight: 600; color: #a5b4fc; }
+        .stat-sub { color: #4a5a72; font-size: 12px; margin-top: 5px; }
+        .tabs { display: flex; gap: 5px; margin-bottom: 25px; border-bottom: 1px solid #2d3748; padding-bottom: 5px; }
+        .tab { padding: 10px 20px; background: none; border: none; color: #8b949e; cursor: pointer; font-size: 14px; border-radius: 6px 6px 0 0; transition: all 0.2s; }
+        .tab:hover { color: #a5b4fc; background: rgba(79,107,196,0.1); }
+        .tab.active { color: #a5b4fc; border-bottom: 2px solid #4f6bc4; background: rgba(79,107,196,0.05); }
+        .create-panel { background: #0f1625; border: 1px solid #2d3748; border-radius: 8px; padding: 20px; margin-bottom: 30px; }
+        .panel-title { font-size: 16px; color: #a5b4fc; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
+        .panel-title::before { content: '>'; color: #4f6bc4; font-weight: bold; }
+        .form-row { display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; align-items: flex-end; }
+        .form-group { flex: 1; min-width: 200px; }
+        .form-label { display: block; color: #6b7a8f; font-size: 12px; margin-bottom: 5px; text-transform: uppercase; }
+        .form-control { width: 100%; background: #1e2434; border: 1px solid #2d3748; color: #e2e8f0; padding: 12px 15px; border-radius: 6px; font-size: 14px; }
+        .form-control:focus { outline: none; border-color: #4f6bc4; }
+        .domain-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; margin-top: 10px; }
+        .domain-btn { background: #1e2434; border: 1px solid #2d3748; color: #8b949e; padding: 8px; border-radius: 4px; cursor: pointer; font-size: 12px; text-align: center; transition: all 0.2s; }
+        .domain-btn:hover { border-color: #4f6bc4; color: #a5b4fc; }
+        .domain-btn.active { background: #4f6bc4; border-color: #4f6bc4; color: white; }
+        .table-container { background: #0f1625; border: 1px solid #2d3748; border-radius: 8px; overflow-x: auto; margin-bottom: 30px; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { text-align: left; padding: 15px 12px; background: #1a2335; color: #8b949e; font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid #2d3748; }
+        td { padding: 15px 12px; border-bottom: 1px solid #2d3748; color: #e2e8f0; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: rgba(79,107,196,0.05); }
+        .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+        .status-up { background: rgba(16,185,129,0.1); color: #10b981; border: 1px solid rgba(16,185,129,0.2); }
+        .status-up::before { content: '●'; font-size: 12px; }
+        .status-down { background: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.2); }
+        .status-down::before { content: '●'; font-size: 12px; }
+        .secret-preview { font-family: 'SF Mono', monospace; color: #a5b4fc; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+        .link-preview { font-family: 'SF Mono', monospace; color: #6b7a8f; font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+        .action-btn { background: none; border: 1px solid #2d3748; color: #8b949e; width: 32px; height: 32px; border-radius: 4px; cursor: pointer; font-size: 16px; transition: all 0.2s; margin: 0 2px; }
+        .action-btn:hover { border-color: #4f6bc4; color: #a5b4fc; background: rgba(79,107,196,0.1); }
+        .action-btn.delete:hover { border-color: #ef4444; color: #ef4444; }
+        .commands-panel { background: #0f1625; border: 1px solid #2d3748; border-radius: 8px; padding: 20px; }
+        .commands-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; margin-top: 15px; }
+        .command-item { background: #1a2335; border: 1px solid #2d3748; border-radius: 6px; padding: 12px 15px; }
+        .command-name { color: #a5b4fc; font-weight: 600; margin-bottom: 5px; }
+        .command-example { color: #6b7a8f; font-size: 11px; }
+        .copy-btn { background: none; border: 1px solid #2d3748; color: #8b949e; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; margin-left: 10px; }
+        .copy-btn:hover { border-color: #4f6bc4; color: #a5b4fc; }
+        .qr-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); align-items: center; justify-content: center; z-index: 1000; }
+        .qr-modal.active { display: flex; }
+        .qr-content { background: #1a2335; border: 1px solid #4f6bc4; border-radius: 12px; padding: 30px; max-width: 400px; width: 90%; }
+        .qr-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .qr-header h3 { color: #a5b4fc; }
+        .qr-close { background: none; border: none; color: #8b949e; font-size: 24px; cursor: pointer; }
+        .qr-code { background: white; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 20px; }
+        .qr-code img { width: 200px; height: 200px; }
+        .qr-link { background: #0f1625; padding: 12px; border-radius: 4px; font-family: 'SF Mono', monospace; font-size: 11px; word-break: break-all; color: #a5b4fc; }
+        .notification { position: fixed; bottom: 20px; right: 20px; background: #1e293b; border-left: 4px solid #4f6bc4; padding: 15px 25px; border-radius: 4px; color: white; font-size: 13px; z-index: 2000; animation: slideIn 0.3s; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .notification.success { border-left-color: #10b981; }
+        .notification.error { border-left-color: #ef4444; }
+        .notification.warning { border-left-color: #f59e0b; }
+        .footer { margin-top: 30px; text-align: center; color: #4a5a72; font-size: 12px; border-top: 1px solid #2d3748; padding-top: 20px; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        @media (max-width: 768px) { .form-row { flex-direction: column; } .stats-panel { grid-template-columns: 1fr 1fr; } .commands-grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="terminal-header">
+        <div class="terminal-dots"><span class="terminal-dot dot-red"></span><span class="terminal-dot dot-yellow"></span><span class="terminal-dot dot-green"></span></div>
+        <div class="terminal-title">root@mtproto-proxy:~/manager</div>
+    </div>
+    <div class="terminal-body">
+        <div class="command-line">
+            <span class="prompt">root@server:~$</span>
+            <span class="command-text">./mtproto-manager</span>
+        </div>
+        <div class="stats-panel">
+            <div class="stat-block"><div class="stat-label">Активные прокси</div><div class="stat-value" id="statsActive">ACTIVE_COUNT</div><div class="stat-sub">online</div></div>
+            <div class="stat-block"><div class="stat-label">Всего</div><div class="stat-value" id="statsTotal">TOTAL_COUNT</div><div class="stat-sub">настроено</div></div>
+            <div class="stat-block"><div class="stat-label">Порты</div><div class="stat-value" id="statsPorts">PORT_RANGE</div><div class="stat-sub">диапазон</div></div>
+            <div class="stat-block"><div class="stat-label">Сервер</div><div class="stat-value" style="font-size:16px" id="serverIP">SERVER_IP_PLACEHOLDER</div><div class="stat-sub">IPv4</div></div>
+        </div>
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('proxies')">📋 Прокси</button>
+            <button class="tab" onclick="switchTab('create')">➕ Создать</button>
+            <button class="tab" onclick="switchTab('commands')">💻 Команды</button>
+            <button class="tab" onclick="switchTab('config')">⚙️ Конфиг</button>
+        </div>
+        <div id="tabProxies" class="tab-content active">
+            <div class="table-container">
+                <table>
+                    <thead><tr><th>Порт</th><th>Домен</th><th>Секрет</th><th>Ссылка</th><th>Статус</th><th>Действия</th></tr></thead>
+                    <tbody id="proxiesTable"></tbody>
+                </table>
+            </div>
+        </div>
+        <div id="tabCreate" class="tab-content">
+            <div class="create-panel">
+                <div class="panel-title">mtproto-manager add --interactive</div>
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label">Порт</label><input type="number" class="form-control" id="newPort" placeholder="1024-65535" min="1024" max="65535"></div>
+                    <div class="form-group"><label class="form-label">Секрет (опционально)</label><input type="text" class="form-control" id="newSecret" placeholder="auto-generate"></div>
+                    <div class="form-group"><label class="form-label">&nbsp;</label><button class="form-control" onclick="generateSecret()" style="background:#1e2434;cursor:pointer">🎲 Сгенерировать</button></div>
+                </div>
+                <label class="form-label">Домен маскировки</label>
+                <div class="domain-grid">
+                    <div class="domain-btn active" onclick="selectDomain('1c.ru',this)">1c.ru</div>
+                    <div class="domain-btn" onclick="selectDomain('vk.com',this)">vk.com</div>
+                    <div class="domain-btn" onclick="selectDomain('yandex.ru',this)">yandex.ru</div>
+                    <div class="domain-btn" onclick="selectDomain('mail.ru',this)">mail.ru</div>
+                    <div class="domain-btn" onclick="selectDomain('ok.ru',this)">ok.ru</div>
+                    <div class="domain-btn" onclick="showCustomDomain()">✏️ Свой</div>
+                </div>
+                <div id="customDomainInput" style="display:none;margin-top:15px"><input type="text" class="form-control" id="customDomain" placeholder="example.com"></div>
+                <div style="display:flex;gap:10px;margin-top:25px">
+                    <button class="form-control" onclick="createProxy()" style="background:#4f6bc4;color:white;border:none;flex:2;cursor:pointer">🚀 Создать прокси</button>
+                    <button class="form-control" onclick="clearForm()" style="background:#1e2434;cursor:pointer;flex:1">Очистить</button>
+                </div>
+                <div id="createResult" style="margin-top:20px;padding:15px;background:#1a2335;border-radius:4px;display:none">
+                    <div style="color:#a5b4fc;margin-bottom:10px"># Результат:</div>
+                    <div style="font-family:'SF Mono',monospace;font-size:12px;word-break:break-all" id="createLink"></div>
+                </div>
+            </div>
+        </div>
+        <div id="tabCommands" class="tab-content">
+            <div class="commands-panel">
+                <div class="panel-title">mtproto-manager --help</div>
+                <div class="commands-grid">
+                    <div class="command-item"><div class="command-name">./mtproto-manager add 1050 1c.ru</div><div class="command-example"># Создать прокси на порту 1050</div><button class="copy-btn" onclick="copyCommand('./mtproto-manager add 1050 1c.ru')">Копировать</button></div>
+                    <div class="command-item"><div class="command-name">./mtproto-manager remove 1050</div><div class="command-example"># Удалить прокси на порту 1050</div><button class="copy-btn" onclick="copyCommand('./mtproto-manager remove 1050')">Копировать</button></div>
+                    <div class="command-item"><div class="command-name">./mtproto-manager links</div><div class="command-example"># Показать все ссылки</div><button class="copy-btn" onclick="copyCommand('./mtproto-manager links')">Копировать</button></div>
+                    <div class="command-item"><div class="command-name">./mtproto-manager scan</div><div class="command-example"># Сканировать прокси</div><button class="copy-btn" onclick="copyCommand('./mtproto-manager scan')">Копировать</button></div>
+                    <div class="command-item"><div class="command-name">docker logs mtproto-1050</div><div class="command-example"># Логи контейнера</div><button class="copy-btn" onclick="copyCommand('docker logs mtproto-1050')">Копировать</button></div>
+                    <div class="command-item"><div class="command-name">sudo ufw allow 1050/tcp</div><div class="command-example"># Открыть порт в фаерволе</div><button class="copy-btn" onclick="copyCommand('sudo ufw allow 1050/tcp')">Копировать</button></div>
+                </div>
+            </div>
+        </div>
+        <div id="tabConfig" class="tab-content">
+            <div class="create-panel">
+                <div class="panel-title">Конфигурация (/etc/mtproto.conf)</div>
+                <pre style="background:#1a2335;padding:20px;border-radius:6px;font-size:12px;overflow-x:auto" id="configText">
+# MTProto Proxy Configuration
+# Generated: $(date)
+# Version: SCRIPT_VERSION
+server_ip=SERVER_IP_PLACEHOLDER
+CONFIG_ENTRIES_PLACEHOLDER
+                </pre>
+                <div style="display:flex;gap:10px;margin-top:20px">
+                    <button class="form-control" onclick="copyConfig()" style="background:#1e2434;cursor:pointer">📋 Копировать конфиг</button>
+                    <button class="form-control" onclick="downloadConfig()" style="background:#1e2434;cursor:pointer">⬇️ Скачать</button>
+                </div>
+            </div>
+        </div>
+        <div class="qr-modal" id="qrModal">
+            <div class="qr-content">
+                <div class="qr-header"><h3>QR-код для подключения</h3><button class="qr-close" onclick="closeQR()">&times;</button></div>
+                <div class="qr-code" id="qrImage"><img src="" alt="QR"></div>
+                <div class="qr-link" id="qrLinkText"></div>
+                <div style="display:flex;gap:10px;margin-top:20px">
+                    <button class="form-control" onclick="copyQRLink()" style="background:#4f6bc4;color:white;border:none">📋 Копировать ссылку</button>
+                    <button class="form-control" onclick="closeQR()" style="background:#1e2434">Закрыть</button>
+                </div>
+            </div>
+        </div>
+        <div class="footer">
+            <div style="display:flex;justify-content:center;gap:30px;margin-bottom:15px">
+                <span>🔹 MTProto Proxy Manager vSCRIPT_VERSION</span>
+                <span>🔹 <span id="footerActive">ACTIVE_COUNT</span> прокси активны</span>
+                <span>🔹 uptime: 99.9%</span>
+            </div>
+            <div style="color:#2d3748">root@server:~# ./mtproto-manager — интерактивный режим</div>
+        </div>
+    </div>
+</div>
+<script>
+// Динамические данные
+const SERVER_IP = 'SERVER_IP_JS';
+const PROXIES_DATA = PROXIES_JSON_PLACEHOLDER;
+let proxies = JSON.parse(JSON.stringify(PROXIES_DATA));
+let selectedDomain = '1c.ru';
+let currentQRPort = null;
+
+// Инициализация
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('serverIP').textContent = SERVER_IP;
+    document.getElementById('statsActive').textContent = proxies.filter(p=>p.status==='up').length;
+    document.getElementById('statsTotal').textContent = proxies.length;
+    document.getElementById('footerActive').textContent = proxies.filter(p=>p.status==='up').length;
+    if(proxies.length>0){const ports=proxies.map(p=>p.port).sort((a,b)=>a-b);document.getElementById('statsPorts').textContent=ports[0]+'-'+ports[ports.length-1];}
+    renderProxies();
+    updateConfig();
+    loadFromStorage();
+});
+
+function loadFromStorage(){const saved=localStorage.getItem('mtproto-proxies');if(saved){proxies=JSON.parse(saved);renderProxies();updateStats();}}
+function saveToStorage(){localStorage.setItem('mtproto-proxies',JSON.stringify(proxies));}
+
+function renderProxies(){
+    const tbody=document.getElementById('proxiesTable');tbody.innerHTML='';
+    proxies.sort((a,b)=>a.port-b.port).forEach(proxy=>{
+        const link='tg://proxy?server='+SERVER_IP+'&port='+proxy.port+'&secret='+proxy.secret;
+        const shortSecret=proxy.secret.substring(0,8)+'…'+proxy.secret.substring(proxy.secret.length-4);
+        const row=document.createElement('tr');
+        row.innerHTML='<td><strong>'+proxy.port+'</strong></td><td>'+proxy.domain+'</td><td><div class="secret-preview" title="'+proxy.secret+'">'+shortSecret+'</div></td><td><div class="link-preview" title="'+link+'">'+link.substring(0,35)+'…</div></td><td><span class="status-badge status-'+proxy.status+'">'+(proxy.status==='up'?'Активен':'Неактивен')+'</span></td><td><button class="action-btn" onclick="copyProxyLink('+proxy.port+')" title="Копировать">📋</button><button class="action-btn" onclick="showQR('+proxy.port+')" title="QR">📱</button><button class="action-btn" onclick="editProxy('+proxy.port+')" title="Редактировать">✏️</button><button class="action-btn delete" onclick="deleteProxy('+proxy.port+')" title="Удалить">🗑️</button></td>';
+        tbody.appendChild(row);
+    });
+}
+
+function updateStats(){const active=proxies.filter(p=>p.status==='up').length;document.getElementById('statsActive').textContent=active;document.getElementById('statsTotal').textContent=proxies.length;if(proxies.length>0){const ports=proxies.map(p=>p.port).sort((a,b)=>a-b);document.getElementById('statsPorts').textContent=ports[0]+'-'+ports[ports.length-1];}}
+
+function switchTab(tab){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));if(tab==='proxies'){document.querySelectorAll('.tab')[0].classList.add('active');document.getElementById('tabProxies').classList.add('active');}else if(tab==='create'){document.querySelectorAll('.tab')[1].classList.add('active');document.getElementById('tabCreate').classList.add('active');}else if(tab==='commands'){document.querySelectorAll('.tab')[2].classList.add('active');document.getElementById('tabCommands').classList.add('active');}else if(tab==='config'){document.querySelectorAll('.tab')[3].classList.add('active');document.getElementById('tabConfig').classList.add('active');}}
+
+function selectDomain(domain,el){selectedDomain=domain;document.querySelectorAll('.domain-btn').forEach(btn=>btn.classList.remove('active'));el.classList.add('active');document.getElementById('customDomainInput').style.display='none';}
+function showCustomDomain(){document.querySelectorAll('.domain-btn').forEach(btn=>btn.classList.remove('active'));document.querySelector('.domain-btn:last-child').classList.add('active');document.getElementById('customDomainInput').style.display='block';selectedDomain='';}
+
+function generateSecret(){const secret=Array.from({length:32},()=>Math.floor(Math.random()*16).toString(16)).join('');document.getElementById('newSecret').value=secret;showNotification('Секрет сгенерирован','success');}
+
+function createProxy(){
+    const port=parseInt(document.getElementById('newPort').value);const secret=document.getElementById('newSecret').value||generateRandomSecret();
+    let domain=selectedDomain;if(selectedDomain===''){domain=document.getElementById('customDomain').value;if(!domain||!domain.match(/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/)){showNotification('Введите корректный домен','error');return;}}
+    if(port<1024||port>65535){showNotification('Порт должен быть 1024-65535','error');return;}
+    const existing=proxies.findIndex(p=>p.port===port);if(existing!==-1){if(!confirm('Порт '+port+' уже используется. Заменить?')){return;}proxies.splice(existing,1);}
+    proxies.push({port:port,domain:domain,secret:secret,status:'up'});saveToStorage();renderProxies();updateStats();
+    const link='tg://proxy?server='+SERVER_IP+'&port='+port+'&secret='+secret;document.getElementById('createLink').textContent=link;document.getElementById('createResult').style.display='block';
+    showNotification('Прокси на порту '+port+' создан','success');clearForm();
+}
+
+function deleteProxy(port){if(confirm('Удалить прокси на порту '+port+'?')){proxies=proxies.filter(p=>p.port!==port);saveToStorage();renderProxies();updateStats();showNotification('Прокси удалён','success');}}
+function editProxy(port){const proxy=proxies.find(p=>p.port===port);if(!proxy)return;const newDomain=prompt('Новый домен:',proxy.domain);if(newDomain&&newDomain.match(/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/)){proxy.domain=newDomain;saveToStorage();renderProxies();showNotification('Домен обновлён','success');}}
+function copyProxyLink(port){const proxy=proxies.find(p=>p.port===port);if(!proxy)return;const link='tg://proxy?server='+SERVER_IP+'&port='+port+'&secret='+proxy.secret;copyToClipboard(link);showNotification('Ссылка скопирована','success');}
+
+function showQR(port){const proxy=proxies.find(p=>p.port===port);if(!proxy)return;const link='tg://proxy?server='+SERVER_IP+'&port='+port+'&secret='+proxy.secret;const qrUrl='https://api.qrserver.com/v1/create-qr-code/?size=200x200&data='+encodeURIComponent(link);document.getElementById('qrImage').innerHTML='<img src="'+qrUrl+'" alt="QR">';document.getElementById('qrLinkText').textContent=link;document.getElementById('qrModal').classList.add('active');currentQRPort=port;}
+function closeQR(){document.getElementById('qrModal').classList.remove('active');}
+function copyQRLink(){copyToClipboard(document.getElementById('qrLinkText').textContent);showNotification('Ссылка скопирована','success');}
+function copyCommand(cmd){copyToClipboard(cmd);showNotification('Команда скопирована','success');}
+function copyConfig(){copyToClipboard(document.getElementById('configText').textContent);showNotification('Конфиг скопирован','success');}
+function downloadConfig(){const config=document.getElementById('configText').textContent;const blob=new Blob([config],{type:'text/plain'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='mtproto.conf';a.click();URL.revokeObjectURL(url);}
+function clearForm(){document.getElementById('newPort').value='';document.getElementById('newSecret').value='';document.getElementById('customDomain').value='';document.getElementById('customDomainInput').style.display='none';document.getElementById('createResult').style.display='none';selectedDomain='1c.ru';document.querySelectorAll('.domain-btn').forEach(btn=>btn.classList.remove('active'));document.querySelector('.domain-btn').classList.add('active');}
+
+function generateRandomSecret(){return Array.from({length:32},()=>Math.floor(Math.random()*16).toString(16)).join('');}
+function copyToClipboard(text){const textarea=document.createElement('textarea');textarea.value=text;document.body.appendChild(textarea);textarea.select();document.execCommand('copy');document.body.removeChild(textarea);}
+function showNotification(msg,type='info'){const n=document.createElement('div');n.className='notification '+type;n.textContent=msg;document.body.appendChild(n);setTimeout(()=>{n.style.animation='slideIn 0.3s ease reverse';setTimeout(()=>n.remove(),300)},2000);}
+function updateConfig(){let cfg='# MTProto Proxy Configuration\n# Generated: '+new Date().toISOString().slice(0,10)+'\n# Version: SCRIPT_VERSION\nserver_ip='+SERVER_IP+'\n';proxies.forEach(p=>cfg+='port_'+p.port+'='+p.domain+':'+p.secret+'\n');document.getElementById('configText').textContent=cfg;}
+setInterval(updateStats,10000);window.addEventListener('beforeunload',saveToStorage);
+</script>
+</body>
+</html>
+HTML_HEAD
+
+    # Замена плейсхолдеров
+    sed -i "s/SERVER_IP_PLACEHOLDER/$SERVER_IP/g;s/SERVER_IP_JS/$SERVER_IP/g;s/ACTIVE_COUNT/$active/g;s/TOTAL_COUNT/$total/g;s/PORT_RANGE/$port_range/g;s/SCRIPT_VERSION/$SCRIPT_VERSION/g;s|PROXIES_JSON_PLACEHOLDER|$proxies_json|g" "$output"
+    
+    # Генерация строк конфига
+    local config_entries=""
+    for port in $ports_list; do
+        local value="${PROXIES[$port]}"
+        config_entries+="port_${port}=${value}\n"
+    done
+    sed -i "s|CONFIG_ENTRIES_PLACEHOLDER|$config_entries|g" "$output"
+    
+    echo "$output"
+}
+
+cli_web_panel() {
+    scan_existing_proxies >/dev/null 2>&1 || true
+    [ ${#PROXIES[@]} -eq 0 ] && { log_warn "No proxies to display"; return 1; }
+    local html_file=$(generate_web_panel)
+    log_success "Console panel generated: $html_file"
+    echo ""; echo -e "${YELLOW}Open in browser:${NC}"; echo "   file://$html_file"
+    echo ""; echo -e "${CYAN}Tip: For network access run:${NC}"; echo "   cd /tmp && python3 -m http.server 8080"
+    echo "   Then open: http://$SERVER_IP:8080/mtproto-panel.html"
+}
+
+
 main() {
     check_root
     check_docker
@@ -577,8 +912,8 @@ main() {
         remove) cli_remove "${@:2}" ;;
         links) cli_links ;;
         scan) scan_existing_proxies; show_proxy_list ;;
-        web-panel) cli_web_panel "${@:2}" ;;
+        web-panel) cli_web_panel "${@:2}" ;;  # ← Уже должно быть
         *) main_menu ;;
-    esac
+esac
 }
 main "$@"
