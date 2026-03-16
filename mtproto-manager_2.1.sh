@@ -309,17 +309,17 @@ quick_install() {
     fi
 }
 
-
-# В case "${1:-}" добавьте:
-web-panel) cli_web_panel ;;  # ← НОВОЕ
-
 main() {
-    check_root; check_docker; check_ufw
+    check_root
+    check_docker
+    check_ufw
     case "${1:-}" in
-    web-panel) cli_web_panel ;;
-        add) cli_add "${@:2}" ;; remove) cli_remove "${@:2}" ;; links) cli_links ;; scan) scan_existing_proxies; show_proxy_list ;; web) cli_web "${@:2}" ;;
-        *) if check_installation_status; then log_info "Обнаружена существующая установка"; scan_existing_proxies >/dev/null; show_proxy_list; main_menu; else log_warn "MTProto Proxy не найден"; echo ""; echo "Хотите выполнить установку? [Y/n]"; read -r confirm; if [[ ! "$confirm" =~ ^[Nn]$ ]]; then quick_install; if [ $? -eq 0 ]; then echo -n "Перейти в главное меню? [Y/n]: "; read -r menu_confirm; [[ ! "$menu_confirm" =~ ^[Nn]$ ]] && main_menu; fi; else log_info "Выход"; exit 0; fi; fi ;;
+        add) cli_add "${@:2}" ;;
+        remove) cli_remove "${@:2}" ;;
+        links) cli_links ;;
+        scan) scan_existing_proxies; show_proxy_list ;;
+        web-panel) cli_web_panel "${@:2}" ;;
+        *) main_menu ;;
     esac
 }
-
 main "$@"
