@@ -644,128 +644,310 @@ urlencode() {
     python3 -c "import urllib.parse; print(urllib.parse.quote('''$1'''))" 2>/dev/null
 }
 
+# ==================== ВЕБ-ИНТЕРФЕЙС (обновлённый) ====================
+
 generate_html_page() {
     local output_file="/tmp/mtproto-web.html"
     
-    cat > "$output_file" << HTML_END
+    # Считаем статистику
+    local total_proxies=${#PROXIES[@]}
+    local active_count=0
+    for port in "${!PROXIES[@]}"; do
+        local container="mtproto"
+        [[ "$port" != "443" ]] && container="${container}-${port}"
+        is_running "$container" && ((active_count++))
+    done
+    
+    cat > "$output_file" << HTML_HEAD
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTProto Proxy — Ссылки для подключения</title>
+    <title>MTProto Proxy — Безопасный Telegram</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(145deg, #0B1120 0%, #192132 100%);
             min-height: 100vh;
-            padding: 20px;
+            padding: 24px;
+            position: relative;
+            overflow-x: hidden;
         }
-        .container { max-width: 800px; margin: 0 auto; }
-        .header { text-align: center; color: white; margin-bottom: 30px; }
-        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
-        .header p { opacity: 0.9; font-size: 1.1em; }
-        .proxy-card {
-            background: white;
-            border-radius: 15px;
-            padding: 25px;
+        body::before {
+            content: '';
+            position: fixed;
+            width: 200%;
+            height: 200%;
+            top: -50%;
+            left: -50%;
+            background: radial-gradient(circle at center, rgba(79, 91, 147, 0.15) 0%, transparent 50%);
+            animation: rotate 30s linear infinite;
+            z-index: 0;
+        }
+        @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .container { max-width: 1000px; margin: 0 auto; position: relative; z-index: 1; }
+        .header { text-align: center; margin-bottom: 48px; animation: fadeInDown 0.8s ease; }
+        @keyframes fadeInDown { from { opacity: 0; transform: translateY(-30px); } to { opacity: 1; transform: translateY(0); } }
+        .badge {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            color: #A5B4FC;
+            padding: 8px 20px;
+            border-radius: 100px;
+            font-size: 0.9rem;
+            font-weight: 500;
             margin-bottom: 20px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            border: 1px solid rgba(165, 180, 252, 0.3);
         }
-        .proxy-title { font-size: 1.5em; color: #333; margin-bottom: 15px; }
-        .proxy-info { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; }
-        .proxy-info p { margin: 5px 0; color: #555; }
+        .header h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #FFFFFF 0%, #A5B4FC 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 16px;
+        }
+        .header p { color: #94A3B8; font-size: 1.2rem; max-width: 600px; margin: 0 auto; line-height: 1.6; }
+        .server-info {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 100px;
+            padding: 12px 24px;
+            display: inline-block;
+            margin-top: 24px;
+            color: #E2E8F0;
+            font-size: 1.1rem;
+        }
+        .server-info strong { color: #A5B4FC; font-weight: 600; }
+        .proxy-grid { display: flex; flex-direction: column; gap: 24px; margin-bottom: 40px; }
+        .proxy-card {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 32px;
+            padding: 28px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            animation: fadeInUp 0.6s ease backwards;
+            position: relative;
+            overflow: hidden;
+        }
+        .proxy-card:hover { transform: translateY(-4px); border-color: rgba(165, 180, 252, 0.3); }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+        .proxy-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
+        .proxy-title { display: flex; align-items: center; gap: 8px; font-size: 1.5rem; font-weight: 600; color: #F1F5F9; }
+        .proxy-title span { background: rgba(165, 180, 252, 0.2); padding: 4px 12px; border-radius: 20px; font-size: 0.9rem; color: #A5B4FC; }
+        .proxy-status {
+            padding: 6px 16px;
+            border-radius: 100px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(16, 185, 129, 0.1);
+            color: #10B981;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+        .proxy-status::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            background: #10B981;
+            border-radius: 50%;
+            display: inline-block;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .proxy-info { background: rgba(15, 23, 42, 0.6); border-radius: 20px; padding: 16px 20px; margin-bottom: 24px; }
+        .info-row { display: flex; align-items: center; gap: 12px; color: #CBD5E1; font-size: 1rem; padding: 8px 0; }
+        .info-row:not(:last-child) { border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+        .info-label { min-width: 140px; color: #94A3B8; }
+        .info-value { color: #F1F5F9; font-weight: 500; }
+        .info-value.highlight { color: #A5B4FC; font-family: monospace; }
+        .qr-section { display: flex; align-items: center; gap: 24px; margin-bottom: 24px; flex-wrap: wrap; }
+        .qr-code { background: white; padding: 12px; border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); transition: transform 0.3s; flex-shrink: 0; }
+        .qr-code:hover { transform: scale(1.05); }
+        .qr-code img { width: 120px; height: 120px; display: block; }
+        .qr-info { flex: 1; }
+        .qr-info p { color: #94A3B8; margin-bottom: 8px; font-size: 0.95rem; }
+        .qr-info .tip { background: rgba(165, 180, 252, 0.1); padding: 12px 16px; border-radius: 16px; color: #CBD5E1; font-size: 0.9rem; border-left: 3px solid #A5B4FC; }
         .proxy-link {
-            background: #e9ecef;
-            padding: 12px;
-            border-radius: 8px;
-            word-break: break-all;
+            background: rgba(15, 23, 42, 0.8);
+            padding: 16px 20px;
+            border-radius: 16px;
             font-family: monospace;
-            font-size: 0.9em;
-            margin-bottom: 15px;
+            font-size: 0.9rem;
+            color: #A5B4FC;
+            word-break: break-all;
+            border: 1px solid rgba(165, 180, 252, 0.2);
+            margin-bottom: 24px;
+            transition: all 0.3s;
         }
-        .qr-section { text-align: center; margin: 20px 0; }
-        .qr-code {
-            display: inline-block;
-            padding: 10px;
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        }
-        .qr-code img { width: 200px; height: 200px; }
+        .proxy-link:hover { border-color: #A5B4FC; }
+        .card-actions { display: flex; gap: 12px; flex-wrap: wrap; }
         .btn {
-            display: inline-block;
-            padding: 12px 25px;
+            padding: 14px 28px;
             border: none;
-            border-radius: 8px;
-            font-size: 1em;
+            border-radius: 16px;
+            font-size: 1rem;
+            font-weight: 500;
             cursor: pointer;
-            margin: 5px;
             text-decoration: none;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            flex: 1;
+            justify-content: center;
+            min-width: 160px;
         }
-        .btn-copy { background: #667eea; color: white; }
-        .btn-telegram { background: #0088cc; color: white; }
-        .footer { text-align: center; color: white; margin-top: 30px; }
+        .btn-copy { background: linear-gradient(135deg, #4F5B93, #6366F1); color: white; box-shadow: 0 8px 20px rgba(99,102,241,0.3); }
+        .btn-copy:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(99,102,241,0.4); }
+        .btn-telegram { background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); color: #E2E8F0; }
+        .btn-telegram:hover { background: rgba(255,255,255,0.1); border-color: #A5B4FC; transform: translateY(-2px); }
+        .footer { text-align: center; padding: 40px 0 20px; border-top: 1px solid rgba(255,255,255,0.05); margin-top: 40px; }
+        .stats { display: flex; justify-content: center; gap: 40px; margin-bottom: 24px; flex-wrap: wrap; }
+        .stat-item { text-align: center; }
+        .stat-value { font-size: 2rem; font-weight: 700; color: #A5B4FC; line-height: 1; margin-bottom: 8px; }
+        .stat-label { color: #64748B; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; }
+        .copyright { color: #475569; font-size: 0.9rem; }
+        .refresh-info { margin-top: 20px; color: #64748B; font-size: 0.9rem; display: flex; align-items: center; justify-content: center; gap: 8px; }
+        .refresh-info::before { content: '↻'; font-size: 1.2rem; animation: spin 2s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @media (max-width: 768px) {
+            .header h1 { font-size: 2.5rem; }
+            .qr-section { flex-direction: column; align-items: flex-start; }
+            .qr-code { align-self: center; }
+            .info-row { flex-direction: column; align-items: flex-start; gap: 4px; }
+            .info-label { min-width: auto; }
+        }
+        @media (max-width: 480px) {
+            .card-actions { flex-direction: column; }
+            .proxy-header { flex-direction: column; align-items: flex-start; }
+            .stats { gap: 20px; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🚀 MTProto Proxy</h1>
-            <p>Ссылки для подключения к Telegram Proxy</p>
-            <p>Сервер: <strong>$SERVER_IP</strong></p>
+            <div class="badge">⚡️ Быстро и безопасно</div>
+            <h1>MTProto Proxy</h1>
+            <p>Обход блокировок с максимальной скоростью и защитой ваших данных</p>
+            <div class="server-info">
+                <span>🖥 Сервер: <strong>$SERVER_IP</strong></span>
+            </div>
         </div>
-HTML_END
+        <div class="proxy-grid">
+HTML_HEAD
 
+    # Генерация карточек прокси
+    local delay=0.1
     for port in $(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n); do
         local value="${PROXIES[$port]}"
         local domain="${value%%:*}"
         local secret="${value#*:}"
+        local container="mtproto"
+        [[ "$port" != "443" ]] && container="${container}-${port}"
+        local status_text=$(is_running "$container" && echo "Активен" || echo "Неактивен")
+        local status_class=$(is_running "$container" && echo "proxy-status" || echo "proxy-status" )
         local link="tg://proxy?server=$SERVER_IP&port=$port&secret=$secret"
-        
-        # 🔥 Правильное URL-кодирование через Python
-        local encoded_link=$(urlencode "$link")
-        local qr_url="https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=$encoded_link"
+        local qr_url="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=$(echo -n "$link" | sed 's/ /%20/g; s/:/%3A/g; s/?/%3F/g; s/=/\%3D/g; s/&/%26/g')"
         
         cat >> "$output_file" << CARD_END
-        <div class="proxy-card">
-            <div class="proxy-title">📌 Порт $port</div>
-            <div class="proxy-info">
-                <p><strong>Домен маскировки:</strong> $domain</p>
-            </div>
-            <div class="qr-section">
-                <div class="qr-code">
-                    <img src="$qr_url" alt="QR Code для порта $port">
+            <div class="proxy-card" style="animation-delay: ${delay}s">
+                <div class="proxy-header">
+                    <div class="proxy-title">
+                        Порт $port
+                        <span>Маскировка</span>
+                    </div>
+                    <div class="$status_class">$status_text</div>
                 </div>
-                <p style="margin-top: 10px; color: #666;">Отсканируйте QR-код для подключения</p>
+                <div class="proxy-info">
+                    <div class="info-row">
+                        <span class="info-label">Домен маскировки:</span>
+                        <span class="info-value highlight">$domain</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Протокол:</span>
+                        <span class="info-value">MTProto 2.0</span>
+                    </div>
+                </div>
+                <div class="qr-section">
+                    <div class="qr-code">
+                        <img src="$qr_url" alt="QR Code для порта $port">
+                    </div>
+                    <div class="qr-info">
+                        <p>📱 Отсканируйте QR-код камерой телефона</p>
+                        <div class="tip">💡 Наведите камеру на QR-код и нажмите на ссылку для подключения</div>
+                    </div>
+                </div>
+                <div class="proxy-link" id="link-$port">$link</div>
+                <div class="card-actions">
+                    <button class="btn btn-copy" onclick="copyLink('$link')">📋 Копировать ссылку</button>
+                    <a href="$link" class="btn btn-telegram">✈️ Открыть в Telegram</a>
+                </div>
             </div>
-            <div class="proxy-link">$link</div>
-            <div style="text-align: center;">
-                <button class="btn btn-copy" onclick="copyLink('$link')">📋 Копировать ссылку</button>
-                <a href="$link" class="btn btn-telegram">✈️ Открыть в Telegram</a>
-            </div>
-        </div>
 CARD_END
+        delay=$(echo "$delay + 0.1" | bc)
     done
 
-    cat >> "$output_file" << FOOTER_END
+    cat >> "$output_file" << HTML_FOOT
+        </div>
         <div class="footer">
-            <p>MTProto Proxy Manager v$SCRIPT_VERSION</p>
-            <script>
-                function copyLink(text) {
-                    navigator.clipboard.writeText(text).then(function() {
-                        alert('✅ Ссылка скопирована в буфер обмена!');
-                    }, function(err) {
-                        prompt('Скопируйте ссылку:', text);
-                    });
-                }
-            </script>
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="stat-value">$total_proxies</div>
+                    <div class="stat-label">Всего прокси</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">$active_count</div>
+                    <div class="stat-label">Активных</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">24/7</div>
+                    <div class="stat-label">Поддержка</div>
+                </div>
+            </div>
+            <div class="copyright">
+                MTProto Proxy Manager v$SCRIPT_VERSION • Все прокси сервера работают стабильно
+            </div>
+            <div class="refresh-info">
+                Автообновление каждые 30 секунд
+            </div>
         </div>
     </div>
+    <script>
+        function copyLink(text) {
+            navigator.clipboard.writeText(text).then(function() {
+                const notification = document.createElement('div');
+                notification.style.cssText = 'position:fixed;top:20px;right:20px;background:linear-gradient(135deg,#10B981,#059669);color:white;padding:16px 24px;border-radius:16px;font-weight:500;box-shadow:0 10px 40px rgba(16,185,129,0.3);z-index:9999;animation:slideIn 0.3s ease;';
+                notification.textContent = '✅ Ссылка скопирована!';
+                const style = document.createElement('style');
+                style.textContent = '@keyframes slideIn{from{transform:translateX(100%);opacity:0;}to{transform:translateX(0);opacity:1;}}';
+                document.head.appendChild(style);
+                document.body.appendChild(notification);
+                setTimeout(() => { notification.style.animation = 'slideIn 0.3s ease reverse'; setTimeout(() => document.body.removeChild(notification), 300); }, 2000);
+            }, function(err) {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                alert('✅ Ссылка скопирована!');
+            });
+        }
+        setTimeout(function() { location.reload(); }, 30000);
+    </script>
 </body>
 </html>
-FOOTER_END
+HTML_FOOT
 
     echo "$output_file"
 }
