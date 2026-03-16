@@ -25,7 +25,16 @@ head -1 /usr/local/bin/mtproto-manager | cat -A
 sudo bash -n /usr/local/bin/mtproto-manager && echo "✅ Синтаксис ОК"
 ```
 
-Установка и запуск меню управления портами
+# 4.📋 Быстрая проверка одной командой
+
+```bash
+sudo chmod +x /usr/local/bin/mtproto-manager && \
+head -1 /usr/local/bin/mtproto-manager | cat -A && \
+sudo bash -n /usr/local/bin/mtproto-manager && echo "✅ ОК" && \
+sudo mtproto-manager
+```
+
+# 5. Установка и запуск меню управления портами
 
 ```bash
 sudo mtproto-manager
