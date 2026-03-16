@@ -290,94 +290,6 @@ show_all_links() {
     log_info "Сохранено: $HOME/mtproto-links.txt"
 }
 
-# ==================== СТАТИЧЕСКИЙ ВЕБ-ИНТЕРФЕЙС ====================
-
-generate_web_panel() {
-    local output="/tmp/mtproto-panel.html"
-    local total=${#PROXIES[@]}
-    local active=0
-    for port in "${!PROXIES[@]}"; do
-        local container=$(get_container_name "$port")
-        is_running "$container" && ((active++))
-    done
-    local ports_list=$(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n)
-    
-    cat > "$output" << 'HTML_HEAD'
-<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MTProto Proxy Manager</title><style>
-body{font-family:sans-serif;background:linear-gradient(145deg,#0a0f1f,#1a1f30);color:#e2e8f0;min-height:100vh;padding:20px}
-.container{max-width:1200px;margin:0 auto}.header{text-align:center;margin-bottom:30px}
-.header h1{font-size:2.5rem;background:linear-gradient(135deg,#fff,#a5b4fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.server-badge{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:30px;padding:10px 20px;display:inline-flex;align-items:center;gap:15px}
-.server-ip{color:#a5b4fc;font-weight:500}.status-dot{width:8px;height:8px;background:#10b981;border-radius:50%;display:inline-block;animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;margin-bottom:30px}
-.stat-card{background:rgba(15,23,42,0.6);border:1px solid rgba(255,255,255,0.05);border-radius:20px;padding:20px;text-align:center}
-.stat-value{font-size:2rem;font-weight:700;color:#a5b4fc}.stat-label{color:#8b949e;font-size:14px;margin-top:5px}
-.proxies-grid{display:grid;gap:20px}.proxy-card{background:rgba(15,23,42,0.7);border:1px solid rgba(255,255,255,0.05);border-radius:24px;padding:25px}
-.proxy-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px}
-.proxy-title{font-size:1.3rem;font-weight:600;color:#f1f5f9}.proxy-status{padding:4px 12px;border-radius:20px;font-size:13px;font-weight:500}
-.status-up{background:rgba(16,185,129,0.1);color:#10b981}.status-down{background:rgba(239,68,68,0.1);color:#ef4444}
-.proxy-info{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:15px}
-.info-item{color:#cbd5e1;font-size:14px}.info-label{color:#8b949e}
-.qr-section{text-align:center;margin:15px 0}.qr-code{background:#fff;padding:10px;border-radius:16px;display:inline-block}
-.qr-code img{width:150px;height:150px}.proxy-link{background:rgba(0,0,0,0.3);padding:12px;border-radius:12px;font-family:monospace;font-size:13px;color:#a5b4fc;word-break:break-all;margin:10px 0}
-.btn-group{display:flex;gap:10px;flex-wrap:wrap}.btn{padding:10px 20px;border:none;border-radius:16px;font-size:14px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
-.btn-copy{background:linear-gradient(135deg,#4f5b93,#6366f1);color:#fff}.btn-tg{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#e2e8f0}
-.footer{text-align:center;padding:30px 0 20px;color:#4b5563;font-size:14px;border-top:1px solid rgba(255,255,255,0.05);margin-top:30px}
-@media(max-width:768px){.proxy-header{flex-direction:column;align-items:flex-start}.btn-group{flex-direction:column}}
-</style></head><body><div class="container">
-<div class="header"><h1>MTProto Proxy Manager</h1>
-<div class="server-badge"><span class="server-ip">Server: SERVER_IP_PLACEHOLDER</span><span class="status-indicator"><span class="status-dot"></span> Active</span></div></div>
-<div class="stats">
-<div class="stat-card"><div class="stat-value" id="activeCount">ACTIVE_COUNT</div><div class="stat-label">Active</div></div>
-<div class="stat-card"><div class="stat-value" id="totalCount">TOTAL_COUNT</div><div class="stat-label">Total Proxies</div></div>
-<div class="stat-card"><div class="stat-value">24/7</div><div class="stat-label">Uptime</div></div>
-</div><div class="proxies-grid" id="proxiesGrid">
-HTML_HEAD
-
-    for port in $ports_list; do
-        local value="${PROXIES[$port]}" domain="${value%%:*}" secret="${value#*:}"
-        local container=$(get_container_name "$port")
-        local status_text=$(is_running "$container" && echo "Active" || echo "Inactive")
-        local status_class=$(is_running "$container" && echo "status-up" || echo "status-down")
-        local link="tg://proxy?server=$SERVER_IP&port=$port&secret=$secret"
-        local qr_data=$(echo -n "$link" | sed 's/ /%20/g;s/:/%3A/g;s/?/%3F/g;s/=/\%3D/g;s/&/%26/g')
-        local qr_url="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=$qr_data"
-        cat >> "$output" << CARD
-<div class="proxy-card"><div class="proxy-header"><div class="proxy-title">Port $port</div><div class="proxy-status $status_class">$status_text</div></div>
-<div class="proxy-info"><div class="info-item"><span class="info-label">Domain:</span> $domain</div><div class="info-item"><span class="info-label">Protocol:</span> MTProto 2.0</div></div>
-<div class="qr-section"><div class="qr-code"><img src="$qr_url" alt="QR"></div><p style="color:#94a3b8;font-size:13px;margin-top:8px">Scan to connect</p></div>
-<div class="proxy-link">$link</div><div class="btn-group">
-<button class="btn btn-copy" onclick="copyLink('$link')">Copy</button><a href="$link" class="btn btn-tg">Telegram</a></div></div>
-CARD
-    done
-
-    cat >> "$output" << 'HTML_FOOT'
-</div><div class="footer"><p>MTProto Proxy Manager vSCRIPT_VERSION - Static Panel</p>
-<p style="margin-top:8px;font-size:12px">Auto-refresh: 30 seconds</p></div></div>
-<script>
-document.getElementById('activeCount')&&(document.getElementById('activeCount').textContent=ACTIVE_COUNT_JS);
-document.getElementById('totalCount')&&(document.getElementById('totalCount').textContent=TOTAL_COUNT_JS);
-function copyLink(t){navigator.clipboard.writeText(t).then(()=>alert('Copied!')).catch(()=>prompt('Copy:',t));}
-setTimeout(()=>location.reload(),30000);
-</script></body></html>
-HTML_FOOT
-
-    sed -i "s/SERVER_IP_PLACEHOLDER/$SERVER_IP/g;s/ACTIVE_COUNT/$active/g;s/TOTAL_COUNT/$total/g;s/ACTIVE_COUNT_JS/$active/g;s/TOTAL_COUNT_JS/$total/g;s/SCRIPT_VERSION/$SCRIPT_VERSION/g" "$output"
-    echo "$output"
-}
-
-cli_web_panel() {
-    scan_existing_proxies >/dev/null 2>&1 || true
-    [ ${#PROXIES[@]} -eq 0 ] && { log_warn "No proxies to display"; return 1; }
-    local html_file=$(generate_web_panel)
-    log_success "Panel generated: $html_file"
-    echo ""; echo -e "${YELLOW}Open in browser:${NC}"; echo "   file://$html_file"
-    echo ""; echo -e "${CYAN}Tip: For network access run:${NC}"; echo "   cd /tmp && python3 -m http.server 8080"
-    echo "   Then open: http://$SERVER_IP:8080/mtproto-panel.html"
-}
-
 # ==================== CLI КОМАНДЫ ====================
 cli_add() {
     local port="$1" domain="$2" secret="${3:-$(generate_secret)}"
@@ -401,95 +313,113 @@ cli_remove() {
 
 cli_links() { scan_existing_proxies >/dev/null; show_all_links; }
 
-# ==================== СТАТИЧЕСКИЙ ВЕБ-ИНТЕРФЕЙС ====================
+# ==================== 🌐 ВЕБ-ПАНЕЛЬ (ТОЛЬКО ПРОСМОТР) ====================
 
 generate_web_panel() {
     local output="/tmp/mtproto-panel.html"
     local total=${#PROXIES[@]}
     local active=0
+    
+    # Считаем активные прокси
     for port in "${!PROXIES[@]}"; do
         local container="mtproto"
         [[ "$port" != "443" ]] && container="${container}-${port}"
         is_running "$container" && ((active++))
     done
-    local ports_list=$(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n)
     
-    cat > "$output" << 'HTML_HEAD'
-<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MTProto Proxy Manager</title><style>
-body{font-family:sans-serif;background:linear-gradient(145deg,#0a0f1f,#1a1f30);color:#e2e8f0;min-height:100vh;padding:20px}
-.container{max-width:1200px;margin:0 auto}.header{text-align:center;margin-bottom:30px}
-.header h1{font-size:2.5rem;background:linear-gradient(135deg,#fff,#a5b4fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.server-badge{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:30px;padding:10px 20px;display:inline-flex;align-items:center;gap:15px}
-.server-ip{color:#a5b4fc;font-weight:500}.status-dot{width:8px;height:8px;background:#10b981;border-radius:50%;display:inline-block;animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px;margin-bottom:30px}
-.stat-card{background:rgba(15,23,42,0.6);border:1px solid rgba(255,255,255,0.05);border-radius:20px;padding:20px;text-align:center}
-.stat-value{font-size:2rem;font-weight:700;color:#a5b4fc}.stat-label{color:#8b949e;font-size:14px;margin-top:5px}
-.proxies-grid{display:grid;gap:20px}.proxy-card{background:rgba(15,23,42,0.7);border:1px solid rgba(255,255,255,0.05);border-radius:24px;padding:25px}
-.proxy-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;flex-wrap:wrap;gap:10px}
-.proxy-title{font-size:1.3rem;font-weight:600;color:#f1f5f9}.proxy-status{padding:4px 12px;border-radius:20px;font-size:13px;font-weight:500}
-.status-up{background:rgba(16,185,129,0.1);color:#10b981}.status-down{background:rgba(239,68,68,0.1);color:#ef4444}
-.proxy-info{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:15px}
-.info-item{color:#cbd5e1;font-size:14px}.info-label{color:#8b949e}
-.qr-section{text-align:center;margin:15px 0}.qr-code{background:#fff;padding:10px;border-radius:16px;display:inline-block}
-.qr-code img{width:150px;height:150px}.proxy-link{background:rgba(0,0,0,0.3);padding:12px;border-radius:12px;font-family:monospace;font-size:13px;color:#a5b4fc;word-break:break-all;margin:10px 0}
-.btn-group{display:flex;gap:10px;flex-wrap:wrap}.btn{padding:10px 20px;border:none;border-radius:16px;font-size:14px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
-.btn-copy{background:linear-gradient(135deg,#4f5b93,#6366f1);color:#fff}.btn-tg{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:#e2e8f0}
-.footer{text-align:center;padding:30px 0 20px;color:#4b5563;font-size:14px;border-top:1px solid rgba(255,255,255,0.05);margin-top:30px}
-@media(max-width:768px){.proxy-header{flex-direction:column;align-items:flex-start}.btn-group{flex-direction:column}}
-</style></head><body><div class="container">
-<div class="header"><h1>MTProto Proxy Manager</h1>
-<div class="server-badge"><span class="server-ip">Server: SERVER_IP_PLACEHOLDER</span><span class="status-indicator"><span class="status-dot"></span> Active</span></div></div>
-<div class="stats">
-<div class="stat-card"><div class="stat-value" id="activeCount">ACTIVE_COUNT</div><div class="stat-label">Active</div></div>
-<div class="stat-card"><div class="stat-value" id="totalCount">TOTAL_COUNT</div><div class="stat-label">Total Proxies</div></div>
-<div class="stat-card"><div class="stat-value">24/7</div><div class="stat-label">Uptime</div></div>
-</div><div class="proxies-grid" id="proxiesGrid">
-HTML_HEAD
-
-    for port in $ports_list; do
-        local value="${PROXIES[$port]}" domain="${value%%:*}" secret="${value#*:}"
+    # Генерация JSON-массива
+    local proxies_json="["
+    local first=true
+    for port in $(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n); do
+        local value="${PROXIES[$port]}"
+        local domain="${value%%:*}"
+        local secret="${value#*:}"
         local container="mtproto"
         [[ "$port" != "443" ]] && container="${container}-${port}"
-        local status_text=$(is_running "$container" && echo "Active" || echo "Inactive")
-        local status_class=$(is_running "$container" && echo "status-up" || echo "status-down")
-        local link="tg://proxy?server=$SERVER_IP&port=$port&secret=$secret"
-        local qr_data=$(echo -n "$link" | sed 's/ /%20/g;s/:/%3A/g;s/?/%3F/g;s/=/\%3D/g;s/&/%26/g')
-        local qr_url="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=$qr_data"
-        cat >> "$output" << CARD
-<div class="proxy-card"><div class="proxy-header"><div class="proxy-title">Port $port</div><div class="proxy-status $status_class">$status_text</div></div>
-<div class="proxy-info"><div class="info-item"><span class="info-label">Domain:</span> $domain</div><div class="info-item"><span class="info-label">Protocol:</span> MTProto 2.0</div></div>
-<div class="qr-section"><div class="qr-code"><img src="$qr_url" alt="QR"></div><p style="color:#94a3b8;font-size:13px;margin-top:8px">Scan to connect</p></div>
-<div class="proxy-link">$link</div><div class="btn-group">
-<button class="btn btn-copy" onclick="copyLink('$link')">Copy</button><a href="$link" class="btn btn-tg">Telegram</a></div></div>
-CARD
+        local status=$(is_running "$container" && echo "up" || echo "down")
+        
+        $first || proxies_json+=","
+        first=false
+        proxies_json+="{\"port\":$port,\"domain\":\"$domain\",\"secret\":\"$secret\",\"status\":\"$status\"}"
     done
-
-    cat >> "$output" << 'HTML_FOOT'
-</div><div class="footer"><p>MTProto Proxy Manager vSCRIPT_VERSION - Static Panel</p>
-<p style="margin-top:8px;font-size:12px">Auto-refresh: 30 seconds</p></div></div>
+    proxies_json+="]"
+    
+    cat > "$output" << HTML_END
+<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MTProto Proxy</title><style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0e1a;color:#e2e8f0;min-height:100vh;padding:20px}
+.container{max-width:1200px;margin:0 auto}
+.header{text-align:center;margin-bottom:30px;padding-bottom:20px;border-bottom:1px solid #2d3748}
+.header h1{font-size:1.8rem;color:#a5b4fc;margin-bottom:5px}
+.header p{color:#6b7a8f;font-size:14px}
+.stats{display:flex;gap:30px;justify-content:center;margin-bottom:30px}
+.stat{color:#8b949e;font-size:14px}
+.stat b{color:#a5b4fc;font-size:1.2rem;margin-left:5px}
+.table-container{background:#141b2b;border:1px solid #2d3748;border-radius:12px;overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;padding:15px 12px;background:#1a2335;color:#8b949e;font-weight:500;font-size:12px;text-transform:uppercase;border-bottom:2px solid #2d3748}
+td{padding:15px 12px;border-bottom:1px solid #2d3748;color:#e2e8f0}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(79,107,196,0.05)}
+.status-up{color:#10b981;font-weight:500}
+.status-up::before{content:'🟢';margin-right:5px}
+.status-down{color:#ef4444;font-weight:500}
+.status-down::before{content:'🔴';margin-right:5px}
+.secret{font-family:monospace;color:#a5b4fc;font-size:13px;max-width:120px;overflow:hidden;text-overflow:ellipsis}
+.link{font-family:monospace;color:#6b7a8f;font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis}
+.actions{display:flex;gap:8px}
+.btn{background:none;border:1px solid #2d3748;color:#8b949e;width:32px;height:32px;border-radius:6px;cursor:pointer;font-size:16px;transition:all 0.2s;display:flex;align-items:center;justify-content:center}
+.btn:hover{border-color:#4f6bc4;color:#a5b4fc;background:rgba(79,107,196,0.1)}
+.footer{text-align:center;padding:30px 0 20px;color:#4a5a72;font-size:12px;border-top:1px solid #2d3748;margin-top:30px}
+@media(max-width:768px){table{font-size:12px}th,td{padding:12px 8px}.secret,.link{max-width:80px}.actions{gap:4px}.btn{width:28px;height:28px;font-size:14px}}
+</style></head><body>
+<div class="container">
+<div class="header"><h1>🚀 MTProto Proxy</h1><p>Server: <b>$SERVER_IP</b></p></div>
+<div class="stats"><div class="stat">Активные: <b>$active</b></div><div class="stat">Всего: <b>$total</b></div></div>
+<div class="table-container"><table><thead><tr><th>Порт</th><th>Домен</th><th>Секрет</th><th>Ссылка</th><th>Статус</th><th>Действия</th></tr></thead><tbody id="proxiesBody"></tbody></table></div>
+<div class="footer">MTProto Manager v$SCRIPT_VERSION • Автообновление: 30с</div>
+</div>
 <script>
-document.getElementById('activeCount')&&(document.getElementById('activeCount').textContent=ACTIVE_COUNT_JS);
-document.getElementById('totalCount')&&(document.getElementById('totalCount').textContent=TOTAL_COUNT_JS);
-function copyLink(t){navigator.clipboard.writeText(t).then(()=>alert('Copied!')).catch(()=>prompt('Copy:',t));}
+const SERVER_IP='$SERVER_IP';
+const PROXIES=$proxies_json;
+const tbody=document.getElementById('proxiesBody');
+PROXIES.sort((a,b)=>a.port-b.port).forEach(p=>{
+const link='tg://proxy?server='+SERVER_IP+'&port='+p.port+'&secret='+p.secret;
+const shortSecret=p.secret.substring(0,8)+'…'+p.secret.substring(p.secret.length-4);
+const row=document.createElement('tr');
+row.innerHTML='<td><b>'+p.port+'</b></td><td>'+p.domain+'</td><td class="secret" title="'+p.secret+'">'+shortSecret+'</td><td class="link" title="'+link+'">'+link.substring(0,40)+'…</td><td class="status-'+p.status+'">'+(p.status==='up'?'Активен':'Неактивен')+'</td><td class="actions"><button class="btn" onclick="copyLink(\''+link+'\')" title="Копировать">📋</button><button class="btn" onclick="showQR(\''+link+'\')" title="QR">📱</button></td></tr>';
+tbody.appendChild(row);
+});
+function copyLink(text){navigator.clipboard.writeText(text).then(()=>{showNotify('✅ Скопировано')}).catch(()=>prompt('Копия:',text))}
+function showQR(link){const qr='https://api.qrserver.com/v1/create-qr-code/?size=150x150&data='+encodeURIComponent(link);const w=window.open('','_blank','width=200,height=200');w.document.write('<div style="text-align:center;padding:20px;font-family:sans-serif"><img src="'+qr+'" style="width:150px;height:150px"><p style="margin-top:10px;font-size:12px;color:#666">Отсканируйте для подключения</p></div>')}
+function showNotify(msg){const n=document.createElement('div');n.style.cssText='position:fixed;bottom:20px;right:20px;background:#1e293b;color:#fff;padding:12px 20px;border-radius:8px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,0.3);z-index:9999;animation:slideIn 0.3s';n.textContent=msg;document.body.appendChild(n);setTimeout(()=>{n.style.animation='slideOut 0.3s';setTimeout(()=>n.remove(),300)},2000);const s=document.createElement('style');s.textContent='@keyframes slideIn{from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}@keyframes slideOut{from{transform:translateY(0);opacity:1}to{transform:translateY(100%);opacity:0}}';document.head.appendChild(s)}
 setTimeout(()=>location.reload(),30000);
 </script></body></html>
-HTML_FOOT
+HTML_END
 
-    sed -i "s/SERVER_IP_PLACEHOLDER/$SERVER_IP/g;s/ACTIVE_COUNT/$active/g;s/TOTAL_COUNT/$total/g;s/ACTIVE_COUNT_JS/$active/g;s/TOTAL_COUNT_JS/$total/g;s/SCRIPT_VERSION/$SCRIPT_VERSION/g" "$output"
     echo "$output"
 }
 
 cli_web_panel() {
+    # 🔥 КРИТИЧНО: сначала сканируем прокси!
     scan_existing_proxies >/dev/null 2>&1 || true
-    [ ${#PROXIES[@]} -eq 0 ] && { log_warn "No proxies to display"; return 1; }
+    
+    if [ ${#PROXIES[@]} -eq 0 ]; then
+        log_warn "Нет прокси для отображения"
+        return 1
+    fi
+    
     local html_file=$(generate_web_panel)
-    log_success "Panel generated: $html_file"
-    echo ""; echo -e "${YELLOW}Open in browser:${NC}"; echo "   file://$html_file"
-    echo ""; echo -e "${CYAN}Tip: For network access run:${NC}"; echo "   cd /tmp && python3 -m http.server 8080"
-    echo "   Then open: http://$SERVER_IP:8080/mtproto-panel.html"
+    log_success "Панель сгенерирована: $html_file"
+    echo ""
+    echo -e "${YELLOW}Откройте в браузере:${NC}"
+    echo "   http://$SERVER_IP:8080/mtproto-panel.html"
+    echo ""
+    echo -e "${CYAN}Для доступа из сети запустите:${NC}"
+    echo "   cd /tmp && python3 -m http.server 8080 --bind 0.0.0.0 &"
 }
+
 # ==================== МЕНЮ И ЗАПУСК ====================
 
 main_menu() {
@@ -505,34 +435,22 @@ main_menu() {
         echo "   1) 📋 Показать список прокси"
         echo "   2) ➕ Добавить новый прокси"
         echo "   3) 🗑️  Удалить прокси"
-        echo "   4) 🔄 Обновить домен маскировки"
+        echo "   4) 🌐 Веб-панель (только просмотр)"
         echo "   5) 🔗 Показать все ссылки"
-        echo "   6) 🔄 Обновить функции bash"
-        echo "   7) 🎨 Консольная панель"    # ← НОВОЕ
         echo "   0) ❌ Выход"
-
-
-        
-        
-        
         echo ""
-        echo -n "Ваш выбор (1-8): "
+        echo -n "Ваш выбор (1-6): "
         read -r choice
         case "$choice" in
             1) show_proxy_list ;;
             2) add_proxy ;;
             3) remove_proxy ;;
-            4) update_domain ;;
+            4) cli_web_panel ;;
             5) show_all_links ;;
-            6) regenerate_functions ;;
-            7) cli_web_panel ;;
-            8|*) log_info "Выход"; exit 0 ;;
-            0|*) log_info "Выход"; exit 0 ;;      # ← Измените
+            6|*) log_info "Выход"; exit 0 ;;
             *) log_warn "Неверный выбор" ;;
         esac
-        echo ""
-        echo -n "Нажмите Enter для продолжения..."
-        read -r
+        echo ""; echo -n "Нажмите Enter для продолжения..."; read -r
     done
 }
 
@@ -694,8 +612,8 @@ main() {
         remove) cli_remove "${@:2}" ;;
         links) cli_links ;;
         scan) scan_existing_proxies; show_proxy_list ;;
-        web-panel) cli_web_panel "${@:2}" ;;  # ← Уже должно быть
+        web-panel) cli_web_panel ;;
         *) main_menu ;;
-esac
+    esac
 }
 main "$@"
