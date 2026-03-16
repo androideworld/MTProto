@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# 🚀 MTProto Proxy Manager v2.1 (FIXED)
-# Исправлено: 1) Запуск через bash  2) Удаление правильного порта в фаерволе
+# MTProto Proxy Manager v2.1
+# Автоматическая установка и управление прокси для Telegram
 #
 
 set -e
@@ -21,16 +21,16 @@ readonly BLUE='\033[0;34m'
 readonly CYAN='\033[0;36m'
 readonly NC='\033[0m'
 
-# 🔥 КРИТИЧНО: Ассоциативный массив (только bash!)
-declare -A PROXIES  # [port]="domain:secret"
+# Ассоциативный массив
+declare -A PROXIES
 
 # ==================== ЛОГИРОВАНИЕ ====================
-log_info()    { echo -e "${BLUE}[ℹ️]${NC} $1"; }
-log_success() { echo -e "${GREEN}[✅]${NC} $1"; }
-log_warn()    { echo -e "${YELLOW}[⚠️]${NC} $1"; }
-log_error()   { echo -e "${RED}[❌]${NC} $1"; }
-log_header()  { echo -e "\n${GREEN}╔════════════════════════════════════╗${NC}\n${GREEN}║${NC} $1 ${GREEN}║${NC}\n${GREEN}╚════════════════════════════════════╝${NC}\n"; }
-log_divider() { echo -e "${CYAN}────────────────────────────────────────${NC}"; }
+log_info()    { echo -e "${BLUE}[i]${NC} $1"; }
+log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
+log_warn()    { echo -e "${YELLOW}[!]${NC} $1"; }
+log_error()   { echo -e "${RED}[ERR]${NC} $1"; }
+log_header()  { echo -e "\n${GREEN}+======================================+${NC}\n${GREEN}|${NC} $1 ${GREEN}|${NC}\n${GREEN}+======================================+${NC}\n"; }
+log_divider() { echo -e "${CYAN}----------------------------------------${NC}"; }
 
 # ==================== ПРОВЕРКИ ====================
 check_root() {
@@ -81,27 +81,17 @@ generate_secret() {
 }
 
 open_firewall_port() {
-    local port="$1"
-    local comment="${2:-Telegram Proxy}"
+    local port="$1" comment="${2:-Telegram Proxy}"
     if command -v ufw &>/dev/null; then
-        ufw allow "$port"/tcp comment "$comment" >/dev/null 2>&1 || \
-        ufw allow "$port"/tcp >/dev/null 2>&1 || true
+        ufw allow "$port"/tcp comment "$comment" >/dev/null 2>&1 || ufw allow "$port"/tcp >/dev/null 2>&1 || true
         log_info "Порт $port открыт в фаерволе"
-    elif command -v firewall-cmd &>/dev/null; then
-        firewall-cmd --add-port="$port"/tcp --permanent >/dev/null 2>&1 || true
-        firewall-cmd --reload >/dev/null 2>&1 || true
-        log_info "Порт $port открыт в firewalld"
-    else
-        log_warn "Фаервол не обнаружен, порт $port не настроен"
     fi
 }
 
 close_firewall_port() {
     local port="$1"
     if command -v ufw &>/dev/null; then
-        if ufw delete allow "$port"/tcp >/dev/null 2>&1; then
-            log_info "Порт $port закрыт в фаерволе"
-        fi
+        ufw delete allow "$port"/tcp >/dev/null 2>&1 && log_info "Порт $port закрыт в фаерволе"
     fi
 }
 
@@ -116,15 +106,13 @@ get_container_name() {
 
 # ==================== СКАНИРОВАНИЕ ====================
 scan_existing_proxies() {
-    log_info "Сканирование существующих прокси..."
+    log_info "Сканирование прокси..."
     PROXIES=()
     local found=0
-    
     for container in $(docker ps --format '{{.Names}}' 2>/dev/null | grep "^mtproto"); do
         local port=""
         [[ "$container" == "mtproto" ]] && port="443"
         [[ "$container" =~ ^mtproto-([0-9]+)$ ]] && port="${BASH_REMATCH[1]}"
-        
         if [ -n "$port" ]; then
             local secret=$(get_secret "$container")
             local domain=$(get_domain "$container")
@@ -134,482 +122,172 @@ scan_existing_proxies() {
             fi
         fi
     done
-    
     if [ "$found" -eq 0 ] && [ -f "$CONFIG_FILE" ]; then
         log_info "Загрузка конфигурации из $CONFIG_FILE..."
         while IFS='=' read -r key value; do
             [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
-            if [[ "$key" == "port_"* ]]; then
-                local port="${key#port_}"
-                PROXIES["$port"]="$value"
-            fi
+            [[ "$key" == "port_"* ]] && PROXIES["${key#port_}"]="$value"
         done < "$CONFIG_FILE"
     fi
-    
     echo "$found"
 }
 
 show_proxy_list() {
-    echo ""
-    log_header "📋 Настроенные прокси"
-    
-    if [ ${#PROXIES[@]} -eq 0 ]; then
-        log_warn "Прокси не найдены"
-        return 1
-    fi
-    
+    log_header "Настроенные прокси"
+    [ ${#PROXIES[@]} -eq 0 ] && { log_warn "Прокси не найдены"; return 1; }
     log_divider
     printf "${CYAN}%-8s %-20s %-35s %s${NC}\n" "ПОРТ" "ДОМЕН" "СЕКРЕТ" "СТАТУС"
     log_divider
-    
     for port in $(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n); do
-        local value="${PROXIES[$port]}"
-        local domain="${value%%:*}"
-        local secret="${value#*:}"
+        local value="${PROXIES[$port]}" domain="${value%%:*}" secret="${value#*:}"
         local container=$(get_container_name "$port")
-        local status="🟢 UP"
-        is_running "$container" || status="🔴 DOWN"
-        
+        local status=$(is_running "$container" && echo "[UP]" || echo "[DOWN]")
         printf "%-8s %-20s %-35s %s\n" "$port" "$domain" "${secret:0:32}..." "$status"
     done
     log_divider
-    echo ""
 }
 
-# ==================== ДОБАВЛЕНИЕ ПРОКСИ ====================
+# ==================== УПРАВЛЕНИЕ ====================
 add_proxy() {
-    echo ""
-    log_header "➕ Добавление нового прокси"
-    
-    local port=""
-    while true; do
-        echo -n "Введите порт (1024-65535): "
+    log_header "Добавление прокси"
+    local port="" domain=""
+    while [ -z "$port" ]; do
+        echo -n "Порт (1024-65535): "
         read -r port
-        if [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1024 ] && [ "$port" -le 65535 ]; then
-            if [ -n "${PROXIES[$port]}" ]; then
-                log_warn "Порт $port уже настроен"
-                echo -n "Продолжить с заменой? [y/N]: "
-                read -r confirm
-                [[ ! "$confirm" =~ ^[Yy]$ ]] && return 1
-            fi
-            break
-        else
-            log_error "Неверный формат порта"
-        fi
+        [[ ! "$port" =~ ^[0-9]+$ || "$port" -lt 1024 || "$port" -gt 65535 ]] && { log_error "Неверно"; port=""; }
+        [ -n "${PROXIES[$port]}" ] && { log_warn "Занят"; port=""; }
     done
-    
-    local domain=""
-    echo ""
-    echo "🎭 Выберите домен для маскировки:"
-    echo "   1) 1c.ru       (официальный сайт 1С)"
-    echo "   2) vk.com      (ВКонтакте)"
-    echo "   3) yandex.ru   (Яндекс)"
-    echo "   4) mail.ru     (Mail.ru) ← Выбрано"
-    echo "   5) ok.ru       (Одноклассники)"
-    echo "   6) 🔧 Ввести свой"
-    echo ""
-    
-    while true; do
-        echo -n "Ваш выбор (1-6) [4]: "
+    echo "1) 1c.ru  2) vk.com  3) yandex.ru  4) mail.ru  5) ok.ru  6) Свой"
+    while [ -z "$domain" ]; do
+        echo -n "Домен [4]: "
         read -r choice
-        choice="${choice:-4}"
-        case "$choice" in
-            1) domain="1c.ru"; break ;;
-            2) domain="vk.com"; break ;;
-            3) domain="yandex.ru"; break ;;
-            4|"") domain="mail.ru"; break ;;
-            5) domain="ok.ru"; break ;;
-            6)
-                echo -n "Введите домен: "
-                read -r domain
-                if [[ "$domain" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-                    break
-                else
-                    log_error "Неверный формат домена"
-                fi
-                ;;
-            *) log_warn "Введите 1-6" ;;
+        case "${choice:-4}" in
+            1) domain="1c.ru";; 2) domain="vk.com";; 3) domain="yandex.ru";;
+            4|"") domain="mail.ru";; 5) domain="ok.ru";;
+            6) echo -n "Домен: "; read -r domain; [[ ! "$domain" =~ \. ]] && domain="";;
         esac
     done
-    
     local secret=$(generate_secret)
-    log_info "Сгенерирован секрет: $secret"
-    
-    echo ""
-    echo -e "${YELLOW}Параметры:${NC}"
-    echo "  Порт:     $port"
-    echo "  Домен:    $domain"
-    echo "  Секрет:   $secret"
-    echo "  IP:       $SERVER_IP"
-    echo ""
-    echo -n "Запустить прокси? [Y/n]: "
+    echo -n "Запустить? [Y/n]: "
     read -r confirm
     [[ "$confirm" =~ ^[Nn]$ ]] && return 0
-    
     local container=$(get_container_name "$port")
-    log_info "Запуск контейнера $container..."
     docker rm -f "$container" >/dev/null 2>&1 || true
-    docker run -d \
-        --name="$container" \
-        --restart=always \
-        -p "$port":443 \
-        -e "SECRET=$secret" \
-        -e "FAKE_TLS_DOMAIN=$domain" \
-        "$DOCKER_IMAGE" >/dev/null
-    
+    docker run -d --name="$container" --restart=always -p "$port":443 -e "SECRET=$secret" -e "FAKE_TLS_DOMAIN=$domain" "$DOCKER_IMAGE" >/dev/null
     sleep 2
-    
     if is_running "$container"; then
-        log_success "✅ Прокси запущен"
-        open_firewall_port "$port" "Telegram Proxy - $domain"
+        log_success "Запущен"
+        open_firewall_port "$port"
         PROXIES["$port"]="${domain}:${secret}"
         save_config
         regenerate_functions
-        
-        echo ""
-        log_header "🔗 Новая ссылка"
         printf "tg://proxy?server=%s&port=%s&secret=%s\n" "$SERVER_IP" "$port" "$secret"
-        echo ""
-        return 0
     else
-        log_error "❌ Ошибка запуска контейнера"
+        log_error "Ошибка запуска"
         return 1
     fi
 }
 
-# ==================== УДАЛЕНИЕ ПРОКСИ (ИСПРАВЛЕНО!) ====================
+# ИСПРАВЛЕНО: правильное удаление порта
 remove_proxy() {
-    echo ""
-    log_header "🗑️  Удаление прокси"
-    
+    log_header "Удаление прокси"
     show_proxy_list || return 0
-    
-    # 🔥 КРИТИЧНО: используем уникальное имя переменной!
     local port_to_remove=""
-    echo -n "Введите порт для удаления: "
+    echo -n "Порт для удаления: "
     read -r port_to_remove
-    
-    if [ -z "${PROXIES[$port_to_remove]}" ]; then
-        log_error "Порт $port_to_remove не найден в конфигурации"
-        return 1
-    fi
-    
-    local container=$(get_container_name "$port_to_remove")
-    
-    echo -n "Удалить прокси на порту $port_to_remove? [y/N]: "
+    [ -z "${PROXIES[$port_to_remove]}" ] && { log_error "Не найден"; return 1; }
+    echo -n "Удалить порт $port_to_remove? [y/N]: "
     read -r confirm
     [[ ! "$confirm" =~ ^[Yy]$ ]] && return 0
-    
-    if is_running "$container"; then
-        docker stop "$container" >/dev/null
-        docker rm "$container" >/dev/null
-        log_success "Контейнер $container удалён"
-    fi
-    
-    # 🔥 КРИТИЧНО: сохраняем порт в отдельную переменную ДО вызова функций!
+    local container=$(get_container_name "$port_to_remove")
+    is_running "$container" && { docker stop "$container" >/dev/null; docker rm "$container" >/dev/null; }
+    # КРИТИЧНО: сохраняем порт ДО вызова функций!
     local deleted_port="$port_to_remove"
-    
     unset "PROXIES[$port_to_remove]"
     save_config
-    
-    # 🔥 regenerate_functions() использует свои локальные переменные
     regenerate_functions
-    
-    # 🔥 КРИТИЧНО: используем deleted_port, а не $port!
-    if command -v ufw &>/dev/null; then
-        echo -n "Закрыть порт $deleted_port в фаерволе? [y/N]: "
-        read -r fw_confirm
-        if [[ "$fw_confirm" =~ ^[Yy]$ ]]; then
-            close_firewall_port "$deleted_port"
-        fi
-    fi
-    
-    log_success "✅ Прокси на порту $deleted_port удалён"
+    echo -n "Закрыть порт $deleted_port в фаерволе? [y/N]: "
+    read -r fw_confirm
+    [[ "$fw_confirm" =~ ^[Yy]$ ]] && close_firewall_port "$deleted_port"
+    log_success "Порт $deleted_port удален"
 }
 
-# ==================== ОБНОВЛЕНИЕ ДОМЕНА ====================
 update_domain() {
-    echo ""
-    log_header "🔄 Обновление домена маскировки"
-    
+    log_header "Обновление домена"
     show_proxy_list || return 0
-    
     local port=""
-    echo -n "Введите порт для обновления домена: "
+    echo -n "Порт: "
     read -r port
-    
-    if [ -z "${PROXIES[$port]}" ]; then
-        log_error "Порт $port не найден"
-        return 1
-    fi
-    
-    local current_domain="${PROXIES[$port]%%:*}"
+    [ -z "${PROXIES[$port]}" ] && { log_error "Не найден"; return 1; }
     local secret="${PROXIES[$port]#*:}"
-    
-    echo "Текущий домен: $current_domain"
-    echo ""
-    echo "🎭 Выберите новый домен:"
-    echo "   1) 1c.ru   2) vk.com   3) yandex.ru   4) mail.ru   5) ok.ru   6) 🔧 Свой"
-    echo ""
-    
-    local domain=""
-    while true; do
-        echo -n "Ваш выбор (1-6): "
-        read -r choice
-        case "$choice" in
-            1) domain="1c.ru"; break ;;
-            2) domain="vk.com"; break ;;
-            3) domain="yandex.ru"; break ;;
-            4) domain="mail.ru"; break ;;
-            5) domain="ok.ru"; break ;;
-            6)
-                echo -n "Введите домен: "
-                read -r domain
-                [[ "$domain" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]] && break
-                log_error "Неверный формат"
-                ;;
-            *) log_warn "Введите 1-6" ;;
-        esac
-    done
-    
-    echo -n "Обновить домен для порта $port? [y/N]: "
+    echo "1) 1c.ru  2) vk.com  3) yandex.ru  4) mail.ru  5) ok.ru  6) Свой"
+    echo -n "Домен [4]: "
+    read -r choice
+    case "${choice:-4}" in
+        1) domain="1c.ru";; 2) domain="vk.com";; 3) domain="yandex.ru";;
+        4|"") domain="mail.ru";; 5) domain="ok.ru";;
+        6) echo -n "Домен: "; read -r domain;;
+    esac
+    echo -n "Обновить? [y/N]: "
     read -r confirm
     [[ ! "$confirm" =~ ^[Yy]$ ]] && return 0
-    
     local container=$(get_container_name "$port")
-    log_info "Перезапуск $container с доменом $domain..."
     docker rm -f "$container" >/dev/null 2>&1 || true
-    docker run -d \
-        --name="$container" \
-        --restart=always \
-        -p "$port":443 \
-        -e "SECRET=$secret" \
-        -e "FAKE_TLS_DOMAIN=$domain" \
-        "$DOCKER_IMAGE" >/dev/null
-    
+    docker run -d --name="$container" --restart=always -p "$port":443 -e "SECRET=$secret" -e "FAKE_TLS_DOMAIN=$domain" "$DOCKER_IMAGE" >/dev/null
     sleep 2
-    
-    if is_running "$container"; then
-        PROXIES["$port"]="${domain}:${secret}"
-        save_config
-        regenerate_functions
-        log_success "✅ Домен обновлён"
-        
-        echo ""
-        printf "🔗 Обновлённая ссылка:\n"
-        printf "tg://proxy?server=%s&port=%s&secret=%s\n" "$SERVER_IP" "$port" "$secret"
-        echo ""
-    else
-        log_error "❌ Ошибка перезапуска"
-        return 1
-    fi
+    is_running "$container" && { PROXIES["$port"]="${domain}:${secret}"; save_config; regenerate_functions; log_success "Обновлено"; } || log_error "Ошибка"
 }
 
 # ==================== ГЕНЕРАЦИЯ ФУНКЦИЙ ====================
 regenerate_functions() {
-    log_info "Генерация функций bash..."
-    
-    # 🔥 КРИТИЧНО: все переменные локальные!
-    local port=""
-    local container=""
-    
+    log_info "Генерация функций..."
     cat > "$BASHRC_PROXY" << EOF
-# MTProto Proxy Functions - Auto-generated
-# Server: $SERVER_IP | Generated: \$(date)
-
+#!/bin/bash
 PROXY_IP="$SERVER_IP"
-
 EOF
-    
     for port in "${!PROXIES[@]}"; do
-        container=$(get_container_name "$port")
-        
+        local container=$(get_container_name "$port")
         cat >> "$BASHRC_PROXY" << EOF
-link${port}() {
-    local s=\$(docker inspect $container --format='{{range .Config.Env}}{{if hasPrefix . "SECRET="}}{{trimPrefix "SECRET=" .}}{{end}}{{end}}' 2>/dev/null)
-    [ -n "\$s" ] && printf "tg://proxy?server=%s&port=${port}&secret=%s\n" "\$PROXY_IP" "\$s" || echo "[ERR] ${port}"
-}
-
+link${port}(){ local s=\$(docker inspect $container --format='{{range .Config.Env}}{{if hasPrefix . "SECRET="}}{{trimPrefix "SECRET=" .}}{{end}}{{end}}' 2>/dev/null); [ -n "\$s" ] && printf "tg://proxy?server=%s&port=${port}&secret=%s\n" "\$PROXY_IP" "\$s" || echo "[ERR] ${port}"; }
 EOF
     done
-    
-    local ports_sorted=$(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n | tr '\n' ' ')
-    
-    cat >> "$BASHRC_PROXY" << EOF
-links() {
-    echo ""
-    echo "=== 📡 MTProto Proxy Links ==="
-    echo "Server: \$PROXY_IP"
-    echo ""
-EOF
-    
-    for port in $ports_sorted; do
-        cat >> "$BASHRC_PROXY" << EOF
-    printf "%s: " "$port"; link${port}; echo ""
-EOF
-    done
-    
     cat >> "$BASHRC_PROXY" << 'EOF'
-    echo ""
-}
-
-# Алиасы управления
-alias proxy-status='docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null | grep mtproto || echo "Нет прокси"'
+links(){ echo ""; echo "=== MTProto Links ==="; echo "Server: $PROXY_IP"; echo "";
 EOF
-    
-    for port in "${!PROXIES[@]}"; do
-        container=$(get_container_name "$port")
-        echo "alias proxy-logs${port}='docker logs --tail 30 $container 2>/dev/null'" >> "$BASHRC_PROXY"
-        echo "alias proxy-restart${port}='docker restart $container 2>/dev/null && echo \"🔄 Перезапущено\"'" >> "$BASHRC_PROXY"
+    for port in $(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n); do
+        echo "    printf \"%s: \" \"$port\"; link${port}; echo \"\"" >> "$BASHRC_PROXY"
     done
-    
-    if ! grep -q "bashrc_proxy" ~/.bashrc 2>/dev/null; then
-        echo "" >> ~/.bashrc
-        echo "# MTProto Proxy Functions" >> ~/.bashrc
-        echo "source $BASHRC_PROXY 2>/dev/null" >> ~/.bashrc
-    fi
-    
+    cat >> "$BASHRC_PROXY" << 'EOF'
+echo ""; }
+alias proxy-status='docker ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | grep mtproto'
+EOF
+    for port in "${!PROXIES[@]}"; do
+        local container=$(get_container_name "$port")
+        echo "alias proxy-logs${port}='docker logs --tail 30 $container 2>/dev/null'" >> "$BASHRC_PROXY"
+    done
+    grep -q "bashrc_proxy" ~/.bashrc 2>/dev/null || echo -e "\n# MTProto\nsource $BASHRC_PROXY" >> ~/.bashrc
     source "$BASHRC_PROXY" 2>/dev/null || true
-    log_success "Функции обновлены ✅"
+    log_success "Функции обновлены"
 }
 
-# ==================== КОНФИГУРАЦИЯ ====================
 save_config() {
     mkdir -p "$(dirname "$CONFIG_FILE")"
-    {
-        echo "# MTProto Proxy Configuration"
-        echo "# Generated: $(date)"
-        echo "# Version: $SCRIPT_VERSION"
-        echo "server_ip=$SERVER_IP"
-        for port in $(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n); do
-            echo "port_${port}=${PROXIES[$port]}"
-        done
-    } > "$CONFIG_FILE"
+    { echo "# MTProto Config"; echo "server_ip=$SERVER_IP"; for port in $(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n); do echo "port_${port}=${PROXIES[$port]}"; done; } > "$CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"
 }
 
-# ==================== ВЫВОД ССЫЛОК ====================
 show_all_links() {
-    echo ""
-    log_header "🔗 Рабочие ссылки"
-    
-    if [ ${#PROXIES[@]} -eq 0 ]; then
-        log_warn "Нет настроенных прокси"
-        return 1
-    fi
-    
+    log_header "Ссылки"
+    [ ${#PROXIES[@]} -eq 0 ] && { log_warn "Нет прокси"; return 1; }
     for port in $(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n); do
-        local value="${PROXIES[$port]}"
-        local domain="${value%%:*}"
-        local secret="${value#*:}"
+        local value="${PROXIES[$port]}" domain="${value%%:*}" secret="${value#*:}"
         local container=$(get_container_name "$port")
-        local status=""
-        is_running "$container" && status=" 🟢" || status=" 🔴"
-        
-        echo -e "${CYAN}📌 Порт $port${NC} (маскировка: $domain)$status"
-        printf "   tg://proxy?server=%s&port=%s&secret=%s\n" "$SERVER_IP" "$port" "$secret"
-        echo ""
+        local status=$(is_running "$container" && echo " [UP]" || echo " [DOWN]")
+        echo -e "${CYAN}Порт $port${NC} ($domain)$status"
+        printf "   tg://proxy?server=%s&port=%s&secret=%s\n\n" "$SERVER_IP" "$port" "$secret"
     done
-    
-    local file="$HOME/mtproto-links.txt"
-    {
-        echo "# MTProto Proxy Links - Generated: $(date)"
-        echo "# Server: $SERVER_IP"
-        echo ""
-        for port in $(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n); do
-            local value="${PROXIES[$port]}"
-            local secret="${value#*:}"
-            echo "tg://proxy?server=$SERVER_IP&port=$port&secret=$secret"
-        done
-    } > "$file"
-    chmod 644 "$file"
-    log_info "Ссылки сохранены в: $file"
-    echo ""
-}
-
-# ==================== ГЛАВНОЕ МЕНЮ ====================
-main_menu() {
-    while true; do
-        echo ""
-        log_header "🚀 MTProto Proxy Manager v$SCRIPT_VERSION"
-        echo "Сервер: $SERVER_IP"
-        echo ""
-        
-        local count=$(scan_existing_proxies)
-        echo "Найдено прокси: $count"
-        echo ""
-        
-        echo "🔧 Выберите действие:"
-        echo "   1) 📋 Показать список прокси"
-        echo "   2) ➕ Добавить новый прокси"
-        echo "   3) 🗑️  Удалить прокси"
-        echo "   4) 🔄 Обновить домен маскировки"
-        echo "   5) 🔗 Показать все ссылки"
-        echo "   6) 🔄 Обновить функции bash"
-        echo "   7) ❌ Выход"
-        echo ""
-        
-        echo -n "Ваш выбор (1-7): "
-        read -r choice
-        
-        case "$choice" in
-            1) show_proxy_list ;;
-            2) add_proxy ;;
-            3) remove_proxy ;;
-            4) update_domain ;;
-            5) show_all_links ;;
-            6) regenerate_functions ;;
-            7|*) log_info "Выход"; exit 0 ;;
-            *) log_warn "Неверный выбор" ;;
-        esac
-        
-        echo ""
-        echo -n "Нажмите Enter для продолжения..."
-        read -r
-    done
-}
-
-# ==================== CLI РЕЖИМ ====================
-cli_add() {
-    local port="$1"
-    local domain="$2"
-    local secret="${3:-$(generate_secret)}"
-    
-    [[ -z "$port" || -z "$domain" ]] && { log_error "Использование: $0 add <port> <domain> [secret]"; exit 1; }
-    
-    local container=$(get_container_name "$port")
-    docker rm -f "$container" >/dev/null 2>&1 || true
-    docker run -d --name="$container" --restart=always -p "$port":443 \
-        -e "SECRET=$secret" -e "FAKE_TLS_DOMAIN=$domain" "$DOCKER_IMAGE" >/dev/null
-    
-    sleep 2
-    is_running "$container" || { log_error "Ошибка запуска"; exit 1; }
-    
-    open_firewall_port "$port" "Telegram Proxy - $domain"
-    PROXIES["$port"]="${domain}:${secret}"
-    save_config
-    regenerate_functions
-    
-    printf "tg://proxy?server=%s&port=%s&secret=%s\n" "$SERVER_IP" "$port" "$secret"
-}
-
-cli_remove() {
-    local port="$1"
-    [[ -z "$port" ]] && { log_error "Использование: $0 remove <port>"; exit 1; }
-    
-    local container=$(get_container_name "$port")
-    docker rm -f "$container" >/dev/null 2>&1 || true
-    unset "PROXIES[$port]"
-    save_config
-    regenerate_functions
-    close_firewall_port "$port"
-    
-    log_success "Прокси на порту $port удалён"
-}
-
-cli_links() {
-    scan_existing_proxies >/dev/null
-    show_all_links
+    { echo "# MTProto Links - $(date)"; for port in $(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n); do echo "tg://proxy?server=$SERVER_IP&port=$port&secret=${PROXIES[$port]#*:}"; done; } > "$HOME/mtproto-links.txt"
+    log_info "Сохранено: $HOME/mtproto-links.txt"
 }
 
 # ==================== СТАТИЧЕСКИЙ ВЕБ-ИНТЕРФЕЙС ====================
@@ -619,7 +297,7 @@ generate_web_panel() {
     local total=${#PROXIES[@]}
     local active=0
     for port in "${!PROXIES[@]}"; do
-        local container="mtproto"; [[ "$port" != "443" ]] && container="${container}-${port}"
+        local container=$(get_container_name "$port")
         is_running "$container" && ((active++))
     done
     local ports_list=$(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n)
@@ -660,7 +338,7 @@ HTML_HEAD
 
     for port in $ports_list; do
         local value="${PROXIES[$port]}" domain="${value%%:*}" secret="${value#*:}"
-        local container="mtproto"; [[ "$port" != "443" ]] && container="${container}-${port}"
+        local container=$(get_container_name "$port")
         local status_text=$(is_running "$container" && echo "Active" || echo "Inactive")
         local status_class=$(is_running "$container" && echo "status-up" || echo "status-down")
         local link="tg://proxy?server=$SERVER_IP&port=$port&secret=$secret"
@@ -679,7 +357,6 @@ CARD
 </div><div class="footer"><p>MTProto Proxy Manager vSCRIPT_VERSION - Static Panel</p>
 <p style="margin-top:8px;font-size:12px">Auto-refresh: 30 seconds</p></div></div>
 <script>
-document.getElementById('serverIp')&&(document.getElementById('serverIp').textContent='SERVER_IP_JS');
 document.getElementById('activeCount')&&(document.getElementById('activeCount').textContent=ACTIVE_COUNT_JS);
 document.getElementById('totalCount')&&(document.getElementById('totalCount').textContent=TOTAL_COUNT_JS);
 function copyLink(t){navigator.clipboard.writeText(t).then(()=>alert('Copied!')).catch(()=>prompt('Copy:',t));}
@@ -687,7 +364,7 @@ setTimeout(()=>location.reload(),30000);
 </script></body></html>
 HTML_FOOT
 
-    sed -i "s/SERVER_IP_PLACEHOLDER/$SERVER_IP/g;s/SERVER_IP_JS/$SERVER_IP/g;s/ACTIVE_COUNT/$active/g;s/TOTAL_COUNT/$total/g;s/ACTIVE_COUNT_JS/$active/g;s/TOTAL_COUNT_JS/$total/g;s/SCRIPT_VERSION/$SCRIPT_VERSION/g" "$output"
+    sed -i "s/SERVER_IP_PLACEHOLDER/$SERVER_IP/g;s/ACTIVE_COUNT/$active/g;s/TOTAL_COUNT/$total/g;s/ACTIVE_COUNT_JS/$active/g;s/TOTAL_COUNT_JS/$total/g;s/SCRIPT_VERSION/$SCRIPT_VERSION/g" "$output"
     echo "$output"
 }
 
@@ -701,18 +378,106 @@ cli_web_panel() {
     echo "   Then open: http://$SERVER_IP:8080/mtproto-panel.html"
 }
 
-# ==================== ЗАПУСК ====================
+# ==================== CLI КОМАНДЫ ====================
+cli_add() {
+    local port="$1" domain="$2" secret="${3:-$(generate_secret)}"
+    [[ -z "$port" || -z "$domain" ]] && { log_error "add <port> <domain>"; exit 1; }
+    local container=$(get_container_name "$port")
+    docker rm -f "$container" >/dev/null 2>&1 || true
+    docker run -d --name="$container" --restart=always -p "$port":443 -e "SECRET=$secret" -e "FAKE_TLS_DOMAIN=$domain" "$DOCKER_IMAGE" >/dev/null
+    sleep 2; is_running "$container" || exit 1
+    open_firewall_port "$port"; PROXIES["$port"]="${domain}:${secret}"; save_config; regenerate_functions
+    printf "tg://proxy?server=%s&port=%s&secret=%s\n" "$SERVER_IP" "$port" "$secret"
+}
+
+cli_remove() {
+    local port="$1"
+    [[ -z "$port" ]] && { log_error "remove <port>"; exit 1; }
+    local container=$(get_container_name "$port")
+    docker rm -f "$container" >/dev/null 2>&1 || true
+    unset "PROXIES[$port]"; save_config; regenerate_functions; close_firewall_port "$port"
+    log_success "Port $port removed"
+}
+
+cli_links() { scan_existing_proxies >/dev/null; show_all_links; }
+
+# ==================== МЕНЮ И ЗАПУСК ====================
+
+main_menu() {
+    while true; do
+        log_header "MTProto Manager v$SCRIPT_VERSION"
+        echo "Server: $SERVER_IP"; echo ""
+        local count=$(scan_existing_proxies)
+        echo "Found proxies: $count"; echo ""
+        echo "1) List  2) Add  3) Remove  4) Update domain  5) Links  6) Web panel  7) Refresh  8) Exit"
+        echo -n "Choice: "
+        read -r choice
+        case "$choice" in
+            1) show_proxy_list;; 2) add_proxy;; 3) remove_proxy;; 4) update_domain;;
+            5) show_all_links;; 6) cli_web_panel;; 7) regenerate_functions;; 8|*) log_info "Exit"; exit 0;;
+            *) log_warn "Invalid";;
+        esac
+        echo -n "Press Enter..."; read -r
+    done
+}
+
+check_installation_status() {
+    local has_config=false has_containers=false
+    [ -f "$CONFIG_FILE" ] && has_config=true
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^mtproto" && has_containers=true
+    [ "$has_config" = true ] || [ "$has_containers" = true ]
+}
+
+quick_install() {
+    log_header "First installation"
+    echo ""; echo "Setup your first proxy."; echo ""
+    local port="" domain="" secret=""
+    while [ -z "$port" ]; do
+        echo -n "Port [443]: "; read -r port; port="${port:-443}"
+        [[ ! "$port" =~ ^[0-9]+$ || "$port" -lt 1024 || "$port" -gt 65535 ]] && { log_error "Invalid"; port=""; }
+    done
+    echo "1) 1c.ru  2) vk.com  3) yandex.ru  4) mail.ru  5) ok.ru"
+    echo -n "Domain [4]: "; read -r choice
+    case "${choice:-4}" in 1) domain="1c.ru";; 2) domain="vk.com";; 3) domain="yandex.ru";; 4|"") domain="mail.ru";; 5) domain="ok.ru";; *) domain="mail.ru";; esac
+    secret=$(generate_secret)
+    echo ""; echo -e "${YELLOW}Params:${NC}"; echo " Port: $port  Domain: $domain  Secret: $secret  IP: $SERVER_IP"; echo ""
+    echo -n "Continue? [Y/n]: "; read -r confirm
+    [[ "$confirm" =~ ^[Nn]$ ]] && { log_info "Cancelled"; exit 0; }
+    local container=$(get_container_name "$port")
+    log_info "Starting $container..."
+    docker rm -f "$container" >/dev/null 2>&1 || true
+    docker run -d --name="$container" --restart=always -p "$port":443 -e "SECRET=$secret" -e "FAKE_TLS_DOMAIN=$domain" "$DOCKER_IMAGE" >/dev/null
+    sleep 3
+    if is_running "$container"; then
+        log_success "Started"; open_firewall_port "$port"
+        PROXIES["$port"]="${domain}:${secret}"; save_config; regenerate_functions
+        echo ""; log_header "Your link"; printf "tg://proxy?server=%s&port=%s&secret=%s\n" "$SERVER_IP" "$port" "$secret"; echo ""
+        log_success "Done!"; echo ""; echo "Commands: mtproto-manager | links | add"
+        return 0
+    else
+        log_error "Failed"; return 1
+    fi
+}
+
 main() {
-    check_root
-    check_docker
-    check_ufw
+    check_root; check_docker; check_ufw
     case "${1:-}" in
-        add) cli_add "${@:2}" ;;
-        remove) cli_remove "${@:2}" ;;
-        links) cli_links ;;
-        scan) scan_existing_proxies; show_proxy_list ;;
-        web-panel) cli_web_panel "${@:2}" ;;
-        *) main_menu ;;
+        add) cli_add "${@:2}";; remove) cli_remove "${@:2}";; links) cli_links;;
+        scan) scan_existing_proxies; show_proxy_list;; web-panel) cli_web_panel "${@:2}";;
+        *) if check_installation_status; then
+            log_info "Existing installation found"
+            scan_existing_proxies >/dev/null; show_proxy_list; main_menu
+        else
+            log_warn "No installation found"
+            echo ""; echo "Install now? [Y/n]"; read -r confirm
+            if [[ ! "$confirm" =~ ^[Nn]$ ]]; then
+                quick_install
+                [ $? -eq 0 ] && { echo -n "Open menu? [Y/n]: "; read -r mc; [[ ! "$mc" =~ ^[Nn]$ ]] && main_menu; }
+            else
+                log_info "Exit"; exit 0
+            fi
+        fi;;
     esac
 }
+
 main "$@"
