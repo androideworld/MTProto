@@ -659,14 +659,72 @@ setTimeout(()=>location.reload(),30000);
 EOF
     echo "$output"
 }
+generate_proxy_json() {
+    local json_file="/tmp/mtproxy-data.json"
+    local first=true
+    
+    cat > "$json_file" << EOF
+{
+  "server": "$SERVER_IP",
+  "proxies": [
+EOF
+    
+    for port in $(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n); do
+        $first || echo "," >> "$json_file"
+        first=false
+        local value="${PROXIES[$port]}"
+        local domain="${value%%:*}"
+        local secret="${value#*:}"
+        local container=$(get_container_name "$port")
+        local status=$(is_running "$container" && echo "up" || echo "down")
+        echo -n "    {\"port\":$port,\"domain\":\"$domain\",\"secret\":\"$secret\",\"status\":\"$status\"}" >> "$json_file"
+    done
+    
+    cat >> "$json_file" << EOF
 
+  ]
+}
+EOF
+    echo "$json_file"
+}
 cli_web_panel() {
     scan_existing_proxies >/dev/null 2>&1 || true
     [ ${#PROXIES[@]} -eq 0 ] && { log_warn "Нет прокси"; return 1; }
-    local f=$(generate_web_panel)
-    log_success "Панель: $f"
-    echo ""; echo -e "${YELLOW}Откройте:${NC} http://$SERVER_IP:8080/mtproto-mini.html"
-    echo -e "${CYAN}Или локально:${NC} file://$f"
+    
+    # Генерируем JSON для панели
+    local json_file=$(generate_proxy_json)
+    
+    # Копируем веб-панель из репозитория (или используем локальную)
+    local panel_url="https://raw.githubusercontent.com/androideworld/MTProto/main/mtproto-web-panel.html"
+    local html_file="/tmp/mtproto-panel.html"
+    
+    # Пробуем скачать актуальную версию, если нет — создаём минимальную
+    if curl -sL "$panel_url" -o "$html_file" 2>/dev/null && [ -s "$html_file" ]; then
+        log_success "✅ Веб-панель загружена из репозитория"
+    else
+        # Fallback: минимальная панель
+        cat > "$html_file" << 'MINI_HTML'
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>MTProto</title>
+<style>body{font-family:sans-serif;background:#0a0e1a;color:#e2e8f0;padding:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #2d3748}.btn{background:none;border:1px solid #2d3748;color:#8b949e;padding:5px 10px;border-radius:4px;cursor:pointer}</style></head><body>
+<h1>🚀 MTProto Proxy</h1><p id="srv"></p><table><thead><tr><th>Порт</th><th>Домен</th><th>Секрет</th><th>Статус</th><th></th></tr></thead><tbody id="tb"></tbody></table>
+<script>
+fetch('/tmp/mtproxy-data.json').then(r=>r.json()).then(d=>{
+document.getElementById('srv').textContent='Server: '+d.server;
+const tb=document.getElementById('tb');
+d.proxies.forEach(p=>{
+const lnk='tg://proxy?server='+d.server+'&port='+p.port+'&secret='+p.secret;
+tb.innerHTML+='<tr><td><b>'+p.port+'</b></td><td>'+p.domain+'</td><td style="font-family:monospace">'+p.secret.slice(0,8)+'…</td><td>'+(p.status==='up'?'🟢':'🔴')+'</td><td><button class="btn" onclick="navigator.clipboard.writeText(\''+lnk+'\')">📋</button></td></tr>';
+});
+});
+</script></body></html>
+MINI_HTML
+    fi
+    
+    log_success "✅ Панель готова"
+    echo ""; echo -e "${YELLOW}Откройте в браузере:${NC}"
+    echo "   file://$html_file"
+    echo ""; echo -e "${CYAN}Или через веб-сервер:${NC}"
+    echo "   cp $html_file /var/www/html/ && откройте http://$SERVER_IP/mtproto-panel.html"
 }
 # ==================== ЗАПУСК ====================
 main() {
