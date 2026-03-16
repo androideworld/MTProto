@@ -239,184 +239,7 @@ show_all_links() {
     log_info "Сохранено: $HOME/mtproto-links.txt"
 }
 
-# ==================== ВЕБ-ИНТЕРФЕЙС ====================
 
-generate_html_page() {
-    local output_file="/tmp/mtproto-web.html"
-    local total_proxies=${#PROXIES[@]}
-    local active_count=0
-    for port in "${!PROXIES[@]}"; do
-        local container=$(get_container_name "$port")
-        is_running "$container" && ((active_count++))
-    done
-    
-    cat > "$output_file" << HTML_HEAD
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTProto Proxy — Безопасный Telegram</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(145deg, #0B1120 0%, #192132 100%); min-height: 100vh; padding: 24px; position: relative; overflow-x: hidden; }
-        body::before { content: ''; position: fixed; width: 200%; height: 200%; top: -50%; left: -50%; background: radial-gradient(circle at center, rgba(79, 91, 147, 0.15) 0%, transparent 50%); animation: rotate 30s linear infinite; z-index: 0; }
-        @keyframes rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        .container { max-width: 1000px; margin: 0 auto; position: relative; z-index: 1; }
-        .header { text-align: center; margin-bottom: 48px; animation: fadeInDown 0.8s ease; }
-        @keyframes fadeInDown { from { opacity: 0; transform: translateY(-30px); } to { opacity: 1; transform: translateY(0); } }
-        .badge { display: inline-block; background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); color: #A5B4FC; padding: 8px 20px; border-radius: 100px; font-size: 0.9rem; font-weight: 500; margin-bottom: 20px; border: 1px solid rgba(165, 180, 252, 0.3); }
-        .header h1 { font-size: 3.5rem; font-weight: 800; background: linear-gradient(135deg, #FFFFFF 0%, #A5B4FC 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 16px; }
-        .header p { color: #94A3B8; font-size: 1.2rem; max-width: 600px; margin: 0 auto; line-height: 1.6; }
-        .server-info { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 100px; padding: 12px 24px; display: inline-block; margin-top: 24px; color: #E2E8F0; font-size: 1.1rem; }
-        .server-info strong { color: #A5B4FC; font-weight: 600; }
-        .proxy-grid { display: flex; flex-direction: column; gap: 24px; margin-bottom: 40px; }
-        .proxy-card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 32px; padding: 28px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); animation: fadeInUp 0.6s ease backwards; position: relative; overflow: hidden; }
-        .proxy-card:hover { transform: translateY(-4px); border-color: rgba(165, 180, 252, 0.3); }
-        @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
-        .proxy-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
-        .proxy-title { display: flex; align-items: center; gap: 8px; font-size: 1.5rem; font-weight: 600; color: #F1F5F9; }
-        .proxy-title span { background: rgba(165, 180, 252, 0.2); padding: 4px 12px; border-radius: 20px; font-size: 0.9rem; color: #A5B4FC; }
-        .proxy-status { padding: 6px 16px; border-radius: 100px; font-size: 0.9rem; font-weight: 500; display: flex; align-items: center; gap: 6px; background: rgba(16, 185, 129, 0.1); color: #10B981; border: 1px solid rgba(16, 185, 129, 0.2); }
-        .proxy-status::before { content: ''; width: 8px; height: 8px; background: #10B981; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-        .proxy-info { background: rgba(15, 23, 42, 0.6); border-radius: 20px; padding: 16px 20px; margin-bottom: 24px; }
-        .info-row { display: flex; align-items: center; gap: 12px; color: #CBD5E1; font-size: 1rem; padding: 8px 0; }
-        .info-row:not(:last-child) { border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
-        .info-label { min-width: 140px; color: #94A3B8; }
-        .info-value { color: #F1F5F9; font-weight: 500; }
-        .info-value.highlight { color: #A5B4FC; font-family: monospace; }
-        .qr-section { display: flex; align-items: center; gap: 24px; margin-bottom: 24px; flex-wrap: wrap; }
-        .qr-code { background: white; padding: 12px; border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); transition: transform 0.3s; flex-shrink: 0; }
-        .qr-code:hover { transform: scale(1.05); }
-        .qr-code img { width: 120px; height: 120px; display: block; }
-        .qr-info { flex: 1; }
-        .qr-info p { color: #94A3B8; margin-bottom: 8px; font-size: 0.95rem; }
-        .qr-info .tip { background: rgba(165, 180, 252, 0.1); padding: 12px 16px; border-radius: 16px; color: #CBD5E1; font-size: 0.9rem; border-left: 3px solid #A5B4FC; }
-        .proxy-link { background: rgba(15, 23, 42, 0.8); padding: 16px 20px; border-radius: 16px; font-family: monospace; font-size: 0.9rem; color: #A5B4FC; word-break: break-all; border: 1px solid rgba(165, 180, 252, 0.2); margin-bottom: 24px; transition: all 0.3s; }
-        .proxy-link:hover { border-color: #A5B4FC; }
-        .card-actions { display: flex; gap: 12px; flex-wrap: wrap; }
-        .btn { padding: 14px 28px; border: none; border-radius: 16px; font-size: 1rem; font-weight: 500; cursor: pointer; text-decoration: none; transition: all 0.3s; display: inline-flex; align-items: center; gap: 8px; flex: 1; justify-content: center; min-width: 160px; }
-        .btn-copy { background: linear-gradient(135deg, #4F5B93, #6366F1); color: white; box-shadow: 0 8px 20px rgba(99,102,241,0.3); }
-        .btn-copy:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(99,102,241,0.4); }
-        .btn-telegram { background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); color: #E2E8F0; }
-        .btn-telegram:hover { background: rgba(255,255,255,0.1); border-color: #A5B4FC; transform: translateY(-2px); }
-        .footer { text-align: center; padding: 40px 0 20px; border-top: 1px solid rgba(255,255,255,0.05); margin-top: 40px; }
-        .stats { display: flex; justify-content: center; gap: 40px; margin-bottom: 24px; flex-wrap: wrap; }
-        .stat-item { text-align: center; }
-        .stat-value { font-size: 2rem; font-weight: 700; color: #A5B4FC; line-height: 1; margin-bottom: 8px; }
-        .stat-label { color: #64748B; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; }
-        .copyright { color: #475569; font-size: 0.9rem; }
-        .refresh-info { margin-top: 20px; color: #64748B; font-size: 0.9rem; display: flex; align-items: center; justify-content: center; gap: 8px; }
-        .refresh-info::before { content: '↻'; font-size: 1.2rem; animation: spin 2s linear infinite; }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        @media (max-width: 768px) { .header h1 { font-size: 2.5rem; } .qr-section { flex-direction: column; align-items: flex-start; } .qr-code { align-self: center; } .info-row { flex-direction: column; align-items: flex-start; gap: 4px; } .info-label { min-width: auto; } }
-        @media (max-width: 480px) { .card-actions { flex-direction: column; } .proxy-header { flex-direction: column; align-items: flex-start; } .stats { gap: 20px; } }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <div class="badge">⚡️ Быстро и безопасно</div>
-            <h1>MTProto Proxy</h1>
-            <p>Обход блокировок с максимальной скоростью и защитой ваших данных</p>
-            <div class="server-info"><span>🖥 Сервер: <strong>$SERVER_IP</strong></span></div>
-        </div>
-        <div class="proxy-grid">
-HTML_HEAD
-
-    local delay=0.1
-    for port in $(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n); do
-        local value="${PROXIES[$port]}" domain="${value%%:*}" secret="${value#*:}"
-        local container=$(get_container_name "$port")
-        local status_text=$(is_running "$container" && echo "Активен" || echo "Неактивен")
-        local link="tg://proxy?server=$SERVER_IP&port=$port&secret=$secret"
-        local qr_url="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=$(echo -n "$link" | sed 's/ /%20/g; s/:/%3A/g; s/?/%3F/g; s/=/\%3D/g; s/&/%26/g')"
-        
-        cat >> "$output_file" << CARD_END
-            <div class="proxy-card" style="animation-delay: ${delay}s">
-                <div class="proxy-header">
-                    <div class="proxy-title">Порт $port<span>Маскировка</span></div>
-                    <div class="proxy-status">$status_text</div>
-                </div>
-                <div class="proxy-info">
-                    <div class="info-row"><span class="info-label">Домен маскировки:</span><span class="info-value highlight">$domain</span></div>
-                    <div class="info-row"><span class="info-label">Протокол:</span><span class="info-value">MTProto 2.0</span></div>
-                </div>
-                <div class="qr-section">
-                    <div class="qr-code"><img src="$qr_url" alt="QR Code для порта $port"></div>
-                    <div class="qr-info"><p>📱 Отсканируйте QR-код камерой телефона</p><div class="tip">💡 Наведите камеру на QR-код и нажмите на ссылку для подключения</div></div>
-                </div>
-                <div class="proxy-link" id="link-$port">$link</div>
-                <div class="card-actions">
-                    <button class="btn btn-copy" onclick="copyLink('$link')">📋 Копировать ссылку</button>
-                    <a href="$link" class="btn btn-telegram">✈️ Открыть в Telegram</a>
-                </div>
-            </div>
-CARD_END
-        delay=$(awk "BEGIN {print $delay + 0.1}")
-    done
-
-    cat >> "$output_file" << HTML_FOOT
-        </div>
-        <div class="footer">
-            <div class="stats">
-                <div class="stat-item"><div class="stat-value">$total_proxies</div><div class="stat-label">Всего прокси</div></div>
-                <div class="stat-item"><div class="stat-value">$active_count</div><div class="stat-label">Активных</div></div>
-                <div class="stat-item"><div class="stat-value">24/7</div><div class="stat-label">Поддержка</div></div>
-            </div>
-            <div class="copyright">MTProto Proxy Manager v$SCRIPT_VERSION • Все прокси сервера работают стабильно</div>
-            <div class="refresh-info">Автообновление каждые 30 секунд</div>
-        </div>
-    </div>
-    <script>
-        function copyLink(text) {
-            navigator.clipboard.writeText(text).then(function() {
-                const notification = document.createElement('div');
-                notification.style.cssText = 'position:fixed;top:20px;right:20px;background:linear-gradient(135deg,#10B981,#059669);color:white;padding:16px 24px;border-radius:16px;font-weight:500;box-shadow:0 10px 40px rgba(16,185,129,0.3);z-index:9999;animation:slideIn 0.3s ease;';
-                notification.textContent = '✅ Ссылка скопирована!';
-                const style = document.createElement('style');
-                style.textContent = '@keyframes slideIn{from{transform:translateX(100%);opacity:0;}to{transform:translateX(0);opacity:1;}}';
-                document.head.appendChild(style);
-                document.body.appendChild(notification);
-                setTimeout(() => { notification.style.animation = 'slideIn 0.3s ease reverse'; setTimeout(() => document.body.removeChild(notification), 300); }, 2000);
-            }, function(err) {
-                const textarea = document.createElement('textarea');
-                textarea.value = text;
-                document.body.appendChild(textarea);
-                textarea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textarea);
-                alert('✅ Ссылка скопирована!');
-            });
-        }
-        setTimeout(function() { location.reload(); }, 30000);
-    </script>
-</body>
-</html>
-HTML_FOOT
-
-    echo "$output_file"
-}
-
-web_interface() {
-    log_header "🌐 Веб-интерфейс"
-    local port="${1:-8080}"
-    command -v python3 &>/dev/null || { log_error "Python3 не установлен. Установите: apt install -y python3"; return 1; }
-    local html_file=$(generate_html_page)
-    log_success "HTML-страница сгенерирована: $html_file"
-    echo ""; echo -e "${YELLOW}Веб-интерфейс запущен!${NC}"; echo ""
-    echo "📍 Откройте в браузере:"; echo "   http://$SERVER_IP:$port"; echo "   http://localhost:$port"
-    echo ""; echo "🔒 Для остановки нажмите: Ctrl+C"; echo ""
-    cd /tmp
-    python3 -m http.server "$port" --bind "0.0.0.0"
-}
-
-cli_web() {
-    local port="${1:-8080}"
-    scan_existing_proxies >/dev/null
-    web_interface "$port"
-}
 
 # ==================== МЕНЮ И ЗАПУСК ====================
 
@@ -433,13 +256,14 @@ main_menu() {
         echo "   4) 🔄 Обновить домен маскировки"
         echo "   5) 🔗 Показать все ссылки"
         echo "   6) 🌐 Веб-интерфейс (QR-коды)"
-        echo "   7) 🔄 Обновить функции bash"
-        echo "   8) ❌ Выход"; echo ""
+        echo "   7) 🌐 Веб-панель (статическая)"  # ← НОВОЕ
+        echo "   8) 🔄 Обновить функции bash"
+        echo "   0) ❌ Выход"                      # ← Измените номер     
         echo -n "Ваш выбор (1-8): "
-        read -r choice
+        read -r choice       
         case "$choice" in
             1) show_proxy_list ;; 2) add_proxy ;; 3) remove_proxy ;; 4) update_domain ;;
-            5) show_all_links ;; 6) cli_web ;; 7) regenerate_functions ;; 8|*) log_info "Выход"; exit 0 ;;
+            5) show_all_links ;; 6) cli_web ;; 7) cli_web_panel ;; 8|*) log_info "Выход"; exit 0 ;;
             *) log_warn "Неверный выбор" ;;
         esac
         echo ""; echo -n "Нажмите Enter для продолжения..."; read -r
@@ -485,9 +309,14 @@ quick_install() {
     fi
 }
 
+
+# В case "${1:-}" добавьте:
+web-panel) cli_web_panel ;;  # ← НОВОЕ
+
 main() {
     check_root; check_docker; check_ufw
     case "${1:-}" in
+    web-panel) cli_web_panel ;;
         add) cli_add "${@:2}" ;; remove) cli_remove "${@:2}" ;; links) cli_links ;; scan) scan_existing_proxies; show_proxy_list ;; web) cli_web "${@:2}" ;;
         *) if check_installation_status; then log_info "Обнаружена существующая установка"; scan_existing_proxies >/dev/null; show_proxy_list; main_menu; else log_warn "MTProto Proxy не найден"; echo ""; echo "Хотите выполнить установку? [Y/n]"; read -r confirm; if [[ ! "$confirm" =~ ^[Nn]$ ]]; then quick_install; if [ $? -eq 0 ]; then echo -n "Перейти в главное меню? [Y/n]: "; read -r menu_confirm; [[ ! "$menu_confirm" =~ ^[Nn]$ ]] && main_menu; fi; else log_info "Выход"; exit 0; fi; fi ;;
     esac
