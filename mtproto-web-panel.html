@@ -245,100 +245,89 @@
     </div>
 
     <script>
-        // Функция загрузки данных из скрипта
-        async function loadProxyData() {
-            try {
-                // В реальном использовании здесь должен быть API endpoint
-                // Но для демонстрации используем тестовые данные
-                // В рабочей версии скрипт должен генерировать JSON с данными
-                
-                // Эмулируем данные для демонстрации
-                const demoData = {
-                    server: '127.0.0.1',
-                    proxies: [
-                        {port: 443, domain: 'mail.ru', secret: 'dd' + 'a'.repeat(32), status: 'up'},
-                        {port: 8443, domain: '1c.ru', secret: 'ee' + 'b'.repeat(32), status: 'up'},
-                        {port: 9443, domain: 'vk.com', secret: 'c'.repeat(32), status: 'down'}
-                    ]
-                };
-                
-                updateTable(demoData);
-            } catch (error) {
-                console.error('Ошибка загрузки данных:', error);
-                document.getElementById('proxy-table-body').innerHTML = `
-                    <tr>
-                        <td colspan="6" style="text-align: center; padding: 30px; color: #ef4444;">
-                            ❌ Ошибка загрузки данных. Убедитесь, что скрипт запущен.
-                        </td>
-                    </tr>
-                `;
-            }
+// Загрузка данных: пробуем локальный JSON, затем демо-данные
+async function loadProxyData() {
+    try {
+        // Пытаемся загрузить JSON, сгенерированный скриптом
+        const response = await fetch('/tmp/mtproxy-data.json');
+        if (!response.ok) throw new Error('JSON not found');
+        const data = await response.json();
+        updateTable(data);
+    } catch (e) {
+        // Fallback: демо-данные для демонстрации
+        const demoData = {
+            server: window.location.hostname || '127.0.0.1',
+            proxies: []  // Пусто, если нет данных
+        };
+        updateTable(demoData);
+        if (document.getElementById('proxy-table-body').children.length === 0) {
+            document.getElementById('proxy-table-body').innerHTML = `
+                <tr><td colspan="6" style="text-align:center;padding:30px;color:#6b7a8f">
+                    ⚠️ Данные не найдены. Запустите:<br>
+                    <code style="background:#0f172a;padding:4px 8px;border-radius:4px">
+                        sudo mtproto-manager web
+                    </code>
+                </td></tr>`;
         }
+    }
+}
 
-        function updateTable(data) {
-            const tbody = document.getElementById('proxy-table-body');
-            document.getElementById('server-ip').textContent = `Сервер: ${data.server}`;
-            
-            const active = data.proxies.filter(p => p.status === 'up').length;
-            document.getElementById('active-count').textContent = active;
-            document.getElementById('total-count').textContent = data.proxies.length;
-            
-            tbody.innerHTML = '';
-            
-            data.proxies.sort((a, b) => a.port - b.port).forEach(proxy => {
-                const link = `tg://proxy?server=${data.server}&port=${proxy.port}&secret=${proxy.secret}`;
-                const shortSecret = proxy.secret.slice(0, 8) + '…' + proxy.secret.slice(-4);
-                const shortLink = link.slice(0, 35) + '…';
-                
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td><b>${proxy.port}</b></td>
-                    <td>${proxy.domain}</td>
-                    <td class="secret" title="${proxy.secret}">${shortSecret}</td>
-                    <td class="link" title="${link}">${shortLink}</td>
-                    <td class="status-${proxy.status}">${proxy.status === 'up' ? 'Активен' : 'Неактивен'}</td>
-                    <td class="actions">
-                        <button class="btn" onclick="copyToClipboard('${link}')" title="Копировать ссылку">📋</button>
-                        <button class="btn" onclick="showQR('${link}')" title="Показать QR-код">📱</button>
-                    </td>
-                `;
-                tbody.appendChild(row);
-            });
-        }
+function updateTable(data) {
+    const tbody = document.getElementById('proxy-table-body');
+    document.getElementById('server-ip').textContent = `Сервер: ${data.server}`;
+    
+    const active = data.proxies?.filter(p => p.status === 'up').length || 0;
+    document.getElementById('active-count').textContent = active;
+    document.getElementById('total-count').textContent = data.proxies?.length || 0;
+    
+    if (!data.proxies?.length) return;
+    
+    tbody.innerHTML = '';
+    data.proxies.sort((a, b) => a.port - b.port).forEach(proxy => {
+        const link = `tg://proxy?server=${data.server}&port=${proxy.port}&secret=${proxy.secret}`;
+        const shortSecret = proxy.secret.slice(0, 8) + '…' + proxy.secret.slice(-4);
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td><b>${proxy.port}</b></td>
+            <td>${proxy.domain}</td>
+            <td class="secret" title="${proxy.secret}">${shortSecret}</td>
+            <td class="link" title="${link}">${link.slice(0, 35)}…</td>
+            <td class="status-${proxy.status}">${proxy.status === 'up' ? 'Активен' : 'Нет'}</td>
+            <td class="actions">
+                <button class="btn" onclick="copyToClipboard('${link}')" title="Копировать">📋</button>
+                <button class="btn" onclick="showQR('${link}')" title="QR">📱</button>
+            </td>`;
+        tbody.appendChild(row);
+    });
+}
 
-        function copyToClipboard(text) {
-            navigator.clipboard.writeText(text).then(() => {
-                showNotification('✅ Ссылка скопирована!');
-            }).catch(() => {
-                prompt('Ручное копирование:', text);
-            });
-        }
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text)
+        .then(() => showNotification('✅ Скопировано'))
+        .catch(() => {
+            const ta = document.createElement('textarea');
+            ta.value = text; document.body.appendChild(ta);
+            ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+            showNotification('✅ Скопировано');
+        });
+}
 
-        function showQR(link) {
-            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(link)}`;
-            const qrWindow = window.open('', '_blank', 'width=200,height=230');
-            qrWindow.document.write(`
-                <html>
-                    <head><title>QR Code</title></head>
-                    <body style="text-align:center;padding:15px;font-family:sans-serif;background:#0a0e1a;color:#fff;">
-                        <img src="${qrUrl}" style="border-radius:10px;margin-bottom:10px;">
-                        <p style="font-size:12px;color:#8b949e;">Сканируйте в Telegram</p>
-                    </body>
-                </html>
-            `);
-        }
+function showQR(link) {
+    const qr = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(link)}`;
+    const w = window.open('', '_blank', 'width=200,height=230');
+    w.document.write(`<html><head><title>QR</title></head><body style="text-align:center;padding:15px;font-family:sans-serif;background:#0a0e1a;color:#fff"><img src="${qr}" style="border-radius:10px"><p style="font-size:12px;color:#8b949e;margin-top:10px">Scan in Telegram</p></body></html>`);
+}
 
-        function showNotification(message) {
-            const notif = document.createElement('div');
-            notif.className = 'notification';
-            notif.textContent = message;
-            document.body.appendChild(notif);
-            setTimeout(() => notif.remove(), 2000);
-        }
+function showNotification(msg) {
+    const n = document.createElement('div');
+    n.className = 'notification'; n.textContent = msg;
+    document.body.appendChild(n);
+    setTimeout(() => n.remove(), 2000);
+}
 
-        // Загружаем данные сразу и каждые 30 секунд
-        loadProxyData();
-        setInterval(loadProxyData, 30000);
+// Автозагрузка
+loadProxyData();
+setInterval(loadProxyData, 30000);
     </script>
 </body>
   </html>
