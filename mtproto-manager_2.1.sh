@@ -687,6 +687,38 @@ EOF
 EOF
     echo "$json_file"
 }
+# ==================== ГЕНЕРАЦИЯ JSON ДЛЯ ВЕБ-ПАНЕЛИ ====================
+generate_proxy_json() {
+    local json_file="/tmp/mtproxy-data.json"
+    local first=true
+    
+    # Сканируем прокси (если ещё не сделано)
+    [ ${#PROXIES[@]} -eq 0 ] && scan_existing_proxies >/dev/null 2>&1
+    
+    cat > "$json_file" << EOF
+{
+  "server": "$SERVER_IP",
+  "proxies": [
+EOF
+    
+    for port in $(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n); do
+        $first || echo "," >> "$json_file"
+        first=false
+        local value="${PROXIES[$port]}"
+        local domain="${value%%:*}"
+        local secret="${value#*:}"
+        local container=$(get_container_name "$port")
+        local status=$(is_running "$container" && echo "up" || echo "down")
+        echo -n "    {\"port\":$port,\"domain\":\"$domain\",\"secret\":\"$secret\",\"status\":\"$status\"}" >> "$json_file"
+    done
+    
+    cat >> "$json_file" << EOF
+
+  ]
+}
+EOF
+    echo "$json_file"
+}
 cli_web_panel() {
     scan_existing_proxies >/dev/null 2>&1 || true
     [ ${#PROXIES[@]} -eq 0 ] && { log_warn "Нет прокси"; return 1; }
