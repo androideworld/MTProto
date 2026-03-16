@@ -547,6 +547,7 @@ show_all_links() {
 
 # ==================== ГЛАВНОЕ МЕНЮ ====================
 
+# ==================== ГЛАВНОЕ МЕНЮ ====================
 main_menu() {
     while true; do
         echo ""
@@ -554,6 +555,7 @@ main_menu() {
         echo "Сервер: $SERVER_IP"
         echo ""
         
+        # Сканирование
         local count=$(scan_existing_proxies)
         echo "Найдено прокси: $count"
         echo ""
@@ -564,11 +566,12 @@ main_menu() {
         echo "   3) 🗑️  Удалить прокси"
         echo "   4) 🔄 Обновить домен маскировки"
         echo "   5) 🔗 Показать все ссылки"
-        echo "   6) 🔄 Обновить функции bash"
-        echo "   7) ❌ Выход"
+        echo "   6) 🌐 Веб-интерфейс (QR-коды)"
+        echo "   7) 🔄 Обновить функции bash"
+        echo "   8) ❌ Выход"
         echo ""
         
-        echo -n "Ваш выбор (1-7): "
+        echo -n "Ваш выбор (1-8): "
         read -r choice
         
         case "$choice" in
@@ -577,8 +580,9 @@ main_menu() {
             3) remove_proxy ;;
             4) update_domain ;;
             5) show_all_links ;;
-            6) regenerate_functions ;;
-            7|*) log_info "Выход"; exit 0 ;;
+            6) cli_web ;;
+            7) regenerate_functions ;;
+            8|*) log_info "Выход"; exit 0 ;;
             *) log_warn "Неверный выбор" ;;
         esac
         
@@ -1004,6 +1008,118 @@ quick_install() {
 }
 
 # ==================== 🔥 ОБНОВЛЁННЫЙ ЗАПУСК ====================
+
+# ==================== 🔥 НОВЫЕ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+
+# Проверка статуса установки
+check_installation_status() {
+    local has_config=false
+    local has_containers=false
+    
+    # Проверка конфига
+    [ -f "$CONFIG_FILE" ] && has_config=true
+    
+    # Проверка контейнеров
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^mtproto" && has_containers=true
+    
+    if [ "$has_config" = true ] || [ "$has_containers" = true ]; then
+        return 0  # ✅ Установлено
+    else
+        return 1  # ❌ Не установлено
+    fi
+}
+
+# Быстрая установка (первый запуск)
+quick_install() {
+    log_header "🚀 Первая установка MTProto Proxy"
+    echo ""
+    echo "Добро пожаловать! Давайте настроим ваш первый прокси."
+    echo ""
+    
+    local port="" domain="" secret=""
+    
+    # Порт
+    while [ -z "$port" ]; do
+        echo -n "Введите порт для прокси (1024-65535) [443]: "
+        read -r port
+        port="${port:-443}"
+        if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
+            log_error "Неверный формат порта"
+            port=""
+        fi
+    done
+    
+    # Домен
+    echo ""
+    echo "🎭 Выберите домен для маскировки:"
+    echo "   1) 1c.ru   2) vk.com   3) yandex.ru   4) mail.ru   5) ok.ru"
+    echo -n "Ваш выбор [4]: "
+    read -r choice
+    case "${choice:-4}" in
+        1) domain="1c.ru";; 2) domain="vk.com";; 3) domain="yandex.ru";;
+        4|"") domain="mail.ru";; 5) domain="ok.ru";;
+        *) domain="mail.ru";;
+    esac
+    
+    # Секрет
+    secret=$(generate_secret)
+    
+    # Подтверждение
+    echo ""
+    echo -e "${YELLOW}Параметры:${NC}"
+    echo "  Порт:     $port"
+    echo "  Домен:    $domain"
+    echo "  Секрет:   $secret"
+    echo "  IP:       $SERVER_IP"
+    echo ""
+    echo -n "Продолжить установку? [Y/n]: "
+    read -r confirm
+    [[ "$confirm" =~ ^[Nn]$ ]] && { log_info "Установка отменена"; exit 0; }
+    
+    # Запуск контейнера
+    local container="mtproto"
+    [[ "$port" != "443" ]] && container="${container}-${port}"
+    
+    log_info "Запуск контейнера $container..."
+    docker rm -f "$container" >/dev/null 2>&1 || true
+    docker run -d \
+        --name="$container" \
+        --restart=always \
+        -p "$port":443 \
+        -e "SECRET=$secret" \
+        -e "FAKE_TLS_DOMAIN=$domain" \
+        "$DOCKER_IMAGE" >/dev/null
+    
+    sleep 3
+    
+    if is_running "$container"; then
+        log_success "✅ Прокси запущен"
+        open_firewall_port "$port" "Telegram Proxy - $domain"
+        PROXIES["$port"]="${domain}:${secret}"
+        save_config
+        regenerate_functions
+        
+        echo ""
+        log_header "🔗 Ваша ссылка"
+        printf "tg://proxy?server=%s&port=%s&secret=%s\n" "$SERVER_IP" "$port" "$secret"
+        echo ""
+        
+        log_success "🎉 Установка завершена!"
+        echo ""
+        echo "📋 Полезные команды:"
+        echo "   sudo mtproto-manager          — главное меню"
+        echo "   sudo mtproto-manager links    — показать ссылки"
+        echo "   sudo mtproto-manager add      — добавить порт"
+        echo ""
+        
+        return 0
+    else
+        log_error "❌ Ошибка запуска контейнера"
+        return 1
+    fi
+}
+
+# ==================== 🔥 ОБНОВЛЁННАЯ ФУНКЦИЯ main() ====================
 
 main() {
     check_root
