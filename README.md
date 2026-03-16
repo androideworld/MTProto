@@ -18,3 +18,15 @@ sudo chmod +x /usr/local/bin/mtproto-manager
 ```bash
 head -1 /usr/local/bin/mtproto-manager | cat -A
 ```
+
+Синтаксис
+
+```bash
+sudo bash -n /usr/local/bin/mtproto-manager && echo "✅ Синтаксис ОК"
+```
+
+Установка и запуск меню управления портами
+
+```bash
+sudo mtproto-manager
+```
