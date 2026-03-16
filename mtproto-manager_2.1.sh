@@ -634,6 +634,273 @@ cli_links() {
     show_all_links
 }
 
+# ==================== ВЕБ-ИНТЕРФЕЙС ====================
+
+generate_html_page() {
+    local output_file="/tmp/mtproto-web.html"
+    local port="${1:-8080}"
+    
+    cat > "$output_file" << HTML_END
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MTProto Proxy — Ссылки для подключения</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        .proxy-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .proxy-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .proxy-title {
+            font-size: 1.5em;
+            color: #333;
+        }
+        .proxy-status {
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+        .status-up { background: #d4edda; color: #155724; }
+        .status-down { background: #f8d7da; color: #721c24; }
+        .proxy-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        .proxy-info p {
+            margin: 5px 0;
+            color: #555;
+        }
+        .proxy-link {
+            background: #e9ecef;
+            padding: 12px;
+            border-radius: 8px;
+            word-break: break-all;
+            font-family: monospace;
+            font-size: 0.9em;
+            margin-bottom: 15px;
+            border: 1px solid #dee2e6;
+        }
+        .qr-section {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .qr-code {
+            display: inline-block;
+            padding: 10px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .qr-code img {
+            width: 200px;
+            height: 200px;
+        }
+        .btn {
+            display: inline-block;
+            padding: 12px 25px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.3s;
+            margin: 5px;
+        }
+        .btn-copy {
+            background: #667eea;
+            color: white;
+        }
+        .btn-copy:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+        }
+        .btn-telegram {
+            background: #0088cc;
+            color: white;
+        }
+        .btn-telegram:hover {
+            background: #0077b5;
+            transform: translateY(-2px);
+        }
+        .footer {
+            text-align: center;
+            color: white;
+            margin-top: 30px;
+            opacity: 0.8;
+        }
+        .refresh-info {
+            text-align: center;
+            color: white;
+            margin-top: 20px;
+            font-size: 0.9em;
+        }
+        @media (max-width: 600px) {
+            .header h1 { font-size: 1.8em; }
+            .proxy-title { font-size: 1.2em; }
+            .qr-code img { width: 150px; height: 150px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 MTProto Proxy</h1>
+            <p>Ссылки для подключения к Telegram Proxy</p>
+            <p>Сервер: <strong>$SERVER_IP</strong></p>
+        </div>
+HTML_END
+
+    local count=0
+    for port in $(echo "${!PROXIES[@]}" | tr ' ' '\n' | sort -n); do
+        local value="${PROXIES[$port]}"
+        local domain="${value%%:*}"
+        local secret="${value#*:}"
+        local container="mtproto"
+        [[ "$port" != "443" ]] && container="${container}-${port}"
+        local status=$(is_running "$container" && echo "UP" || echo "DOWN")
+        local status_class=$( [[ "$status" == "UP" ]] && echo "status-up" || echo "status-down" )
+        local status_text=$( [[ "$status" == "UP" ]] && echo "🟢 Активен" || echo "🔴 Неактивен" )
+        local link="tg://proxy?server=$SERVER_IP&port=$port&secret=$secret"
+        local qr_url="https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=$(echo -n "$link" | urlencode)"
+        
+        cat >> "$output_file" << CARD_END
+        <div class="proxy-card">
+            <div class="proxy-header">
+                <div class="proxy-title">📌 Порт $port</div>
+                <div class="proxy-status $status_class">$status_text</div>
+            </div>
+            <div class="proxy-info">
+                <p><strong>Домен маскировки:</strong> $domain</p>
+                <p><strong>Статус:</strong> $status</p>
+            </div>
+            <div class="qr-section">
+                <div class="qr-code">
+                    <img src="$qr_url" alt="QR Code для порта $port">
+                </div>
+                <p style="margin-top: 10px; color: #666;">Отсканируйте QR-код для подключения</p>
+            </div>
+            <div class="proxy-link">$link</div>
+            <div style="text-align: center;">
+                <button class="btn btn-copy" onclick="copyLink('$link')">📋 Копировать ссылку</button>
+                <a href="$link" class="btn btn-telegram">✈️ Открыть в Telegram</a>
+            </div>
+        </div>
+CARD_END
+        ((count++))
+    done
+
+    cat >> "$output_file" << FOOTER_END
+        <div class="footer">
+            <p>MTProto Proxy Manager v$SCRIPT_VERSION</p>
+            <p>Всего прокси: $count</p>
+        </div>
+        <div class="refresh-info">
+            <p>🔄 Страница обновляется каждые 30 секунд</p>
+            <script>
+                setTimeout(function(){ location.reload(); }, 30000);
+                
+                function copyLink(text) {
+                    navigator.clipboard.writeText(text).then(function() {
+                        alert('✅ Ссылка скопирована в буфер обмена!');
+                    }, function(err) {
+                        prompt('Скопируйте ссылку:', text);
+                    });
+                }
+            </script>
+        </div>
+    </div>
+</body>
+</html>
+FOOTER_END
+
+    echo "$output_file"
+}
+
+urlencode() {
+    python3 -c "import urllib.parse; print(urllib.parse.quote('''$1'''))" 2>/dev/null || \
+    echo "$1" | sed 's/ /%20/g; s/:/%3A/g; s/?/%3F/g; s/=/\%3D/g; s/&/%26/g'
+}
+
+web_interface() {
+    echo ""
+    log_header "🌐 Веб-интерфейс"
+    
+    local port="${1:-8080}"
+    
+    # Проверка Python
+    if ! command -v python3 &>/dev/null; then
+        log_error "Python3 не установлен. Установите: apt install -y python3"
+        return 1
+    fi
+    
+    # Генерация HTML
+    local html_file=$(generate_html_page "$port")
+    log_success "HTML-страница сгенерирована: $html_file"
+    
+    # Определение IP для доступа
+    local listen_ip="0.0.0.0"
+    
+    echo ""
+    echo -e "${YELLOW}Веб-интерфейс запущен!${NC}"
+    echo ""
+    echo "📍 Откройте в браузере:"
+    echo "   http://$SERVER_IP:$port"
+    echo "   http://localhost:$port"
+    echo ""
+    echo "🔒 Для остановки нажмите: Ctrl+C"
+    echo ""
+    
+    # Запуск HTTP-сервера
+    cd /tmp
+    python3 -m http.server "$port" --bind "$listen_ip"
+}
+
+# ==================== CLI ДЛЯ ВЕБА ====================
+cli_web() {
+    local port="${1:-8080}"
+    scan_existing_proxies >/dev/null
+    web_interface "$port"
+}
+
 # ==================== 🔥 НОВЫЕ ФУНКЦИИ ====================
 
 # Проверка установки
