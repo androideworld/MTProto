@@ -3,7 +3,7 @@
 
 # 1. Скачать и установить
 ```bash
-sudo curl -fsSL https://raw.githubusercontent.com/androideworld/MTProto/main/mtproto-manager_2.1.sh \
+sudo curl -fsSL https://github.com/androideworld/MTProto-manager/raw/refs/heads/main/install.sh \
     -o /usr/local/bin/mtproto-manager
 ```
 
